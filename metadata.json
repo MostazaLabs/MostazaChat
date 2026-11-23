@@ -1,0 +1,6 @@
+{
+  "name": "MostazaChat",
+  "description": "MostazaChat de MostazaLabs: estudio de conversaciones simuladas con importación desde la agenda y sincronización en la nube entre dispositivos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

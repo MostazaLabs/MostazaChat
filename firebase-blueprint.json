@@ -1,0 +1,332 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and MostazaChat studio preferences",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Google display name"
+        },
+        "email": {
+          "type": "string",
+          "description": "Google account email"
+        },
+        "defaultMyName": {
+          "type": "string",
+          "description": "Default sender name for 'Me' in simulated chats"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on creation (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on update (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": ["userId", "displayName", "defaultMyName", "createdAt", "updatedAt"]
+    },
+    "FakeChat": {
+      "title": "FakeChat",
+      "description": "A simulated chat conversation or fake group thread",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID"
+        },
+        "contactName": {
+          "type": "string",
+          "description": "Simulated contact or group title"
+        },
+        "groupChat": {
+          "type": "boolean",
+          "description": "Whether this conversation is a simulated group chat"
+        },
+        "statusText": {
+          "type": "string",
+          "description": "Header subtitle (e.g., en línea, últ. vez hoy a las 14:20)"
+        },
+        "online": {
+          "type": "boolean",
+          "description": "Whether the green online dot is visible"
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Whether the verified badge is shown next to the contact name"
+        },
+        "avatarEmoji": {
+          "type": "string",
+          "description": "Avatar emoji or initials"
+        },
+        "avatarColorHex": {
+          "type": "string",
+          "description": "Hex color string for avatar badge"
+        },
+        "avatarImageBase64": {
+          "type": "string",
+          "description": "Optional compressed Base64 JPEG profile photo synced across devices"
+        },
+        "wallpaperTheme": {
+          "type": "string",
+          "enum": ["CLASSIC", "MIDNIGHT", "MINT", "OCEAN", "CORAL"],
+          "description": "Chat room wallpaper visual style"
+        },
+        "unreadCount": {
+          "type": "integer",
+          "description": "Simulated unread badge count"
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "Whether the chat is pinned to the top"
+        },
+        "lastMessagePreview": {
+          "type": "string",
+          "description": "Preview of the latest message"
+        },
+        "lastMessageTime": {
+          "type": "string",
+          "description": "Fake display time of the latest message"
+        },
+        "lastMessageSender": {
+          "type": "string",
+          "enum": ["ME", "OTHER", "SYSTEM"],
+          "description": "Role of the latest message sender"
+        },
+        "lastMessageTick": {
+          "type": "string",
+          "enum": ["SENT", "DELIVERED", "READ"],
+          "description": "Tick state of the latest message"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on creation (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on update (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": [
+        "userId",
+        "contactName",
+        "groupChat",
+        "statusText",
+        "online",
+        "verified",
+        "avatarEmoji",
+        "avatarColorHex",
+        "wallpaperTheme",
+        "unreadCount",
+        "pinned",
+        "lastMessagePreview",
+        "lastMessageTime",
+        "lastMessageSender",
+        "lastMessageTick",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FakeMessage": {
+      "title": "FakeMessage",
+      "description": "A single simulated message inside a fake chat",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID"
+        },
+        "chatId": {
+          "type": "string",
+          "description": "Parent FakeChat document ID"
+        },
+        "senderRole": {
+          "type": "string",
+          "enum": ["ME", "OTHER", "SYSTEM"],
+          "description": "Who sent the message"
+        },
+        "senderName": {
+          "type": "string",
+          "description": "Optional sender label for group chats"
+        },
+        "text": {
+          "type": "string",
+          "description": "Message body or media caption text"
+        },
+        "messageType": {
+          "type": "string",
+          "enum": ["TEXT", "VOICE", "IMAGE", "VIDEO", "CALL_EVENT", "SYSTEM"],
+          "description": "Message rendering type"
+        },
+        "displayTime": {
+          "type": "string",
+          "description": "Editable fake timestamp label (e.g., 14:22)"
+        },
+        "dateLabel": {
+          "type": "string",
+          "description": "Editable date header (e.g., HOY)"
+        },
+        "tickStatus": {
+          "type": "string",
+          "enum": ["SENT", "DELIVERED", "READ"],
+          "description": "Delivery/read checkmark state"
+        },
+        "voiceDuration": {
+          "type": "string",
+          "description": "Optional duration string for VOICE messages"
+        },
+        "mediaPreviewBase64": {
+          "type": "string",
+          "description": "Optional compressed Base64 JPEG preview for IMAGE or VIDEO messages"
+        },
+        "localMediaPath": {
+          "type": "string",
+          "description": "Optional local app-private file path for high-res photo or video playback"
+        },
+        "mediaFileName": {
+          "type": "string",
+          "description": "Optional searchable media display filename"
+        },
+        "mediaDuration": {
+          "type": "string",
+          "description": "Optional duration string for VIDEO messages"
+        },
+        "reactionEmoji": {
+          "type": "string",
+          "description": "Optional emoji reaction attached to bubble"
+        },
+        "replyToText": {
+          "type": "string",
+          "description": "Optional quoted message snippet"
+        },
+        "replyToSender": {
+          "type": "string",
+          "description": "Optional quoted sender label"
+        },
+        "orderIndex": {
+          "type": "integer",
+          "description": "Monotonic ordering index within the conversation"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on creation (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on update (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": [
+        "userId",
+        "chatId",
+        "senderRole",
+        "senderName",
+        "text",
+        "messageType",
+        "displayTime",
+        "dateLabel",
+        "tickStatus",
+        "orderIndex",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FakeCallRecord": {
+      "title": "FakeCallRecord",
+      "description": "Simulated call preset or log entry",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID"
+        },
+        "contactName": {
+          "type": "string",
+          "description": "Simulated caller name"
+        },
+        "avatarEmoji": {
+          "type": "string",
+          "description": "Caller avatar emoji or initials"
+        },
+        "avatarColorHex": {
+          "type": "string",
+          "description": "Caller avatar color hex"
+        },
+        "avatarImageBase64": {
+          "type": "string",
+          "description": "Optional compressed Base64 JPEG caller photo"
+        },
+        "callType": {
+          "type": "string",
+          "enum": ["VOICE", "VIDEO"],
+          "description": "Voice or video call"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["INCOMING", "OUTGOING", "MISSED"],
+          "description": "Call direction state"
+        },
+        "durationText": {
+          "type": "string",
+          "description": "Display duration or status label"
+        },
+        "displayTime": {
+          "type": "string",
+          "description": "Fake call time label"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on creation (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp on update (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": [
+        "userId",
+        "contactName",
+        "avatarEmoji",
+        "avatarColorHex",
+        "callType",
+        "direction",
+        "durationText",
+        "displayTime",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-scoped user profile and default studio preferences"
+    },
+    "/users/{userId}/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/FakeChat" },
+      "description": "Simulated chat conversations belonging to the signed-in user"
+    },
+    "/users/{userId}/chats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/FakeMessage" },
+      "description": "Simulated messages inside a specific fake chat"
+    },
+    "/users/{userId}/fakeCalls/{callId}": {
+      "schema": { "$ref": "#/entities/FakeCallRecord" },
+      "description": "Simulated call logs and quick-launch presets for the signed-in user"
+    }
+  }
+}

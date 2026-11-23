@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">MostazaChat</string>
+    <string name="developer_brand">MostazaLabs</string>
+    <string name="app_tagline">Estudio de chats simulados en la nube</string>
+    <string name="sign_in_with_google">Continuar con Google</string>
+    <string name="cd_hero_illustration">Ilustración de sincronización de chats entre dispositivos</string>
+    <string name="cd_back">Volver</string>
+    <string name="cd_search">Buscar</string>
+    <string name="cd_import_contact">Importar contacto de la agenda</string>
+    <string name="cd_new_chat">Crear nuevo chat</string>
+    <string name="cd_screenshot_mode">Alternar modo captura</string>
+    <string name="cd_voice_call">Llamada de voz simulada</string>
+    <string name="cd_video_call">Videollamada simulada</string>
+    <string name="cd_chat_settings">Configuración del chat</string>
+    <string name="cd_send_message">Enviar mensaje</string>
+    <string name="cd_attach_media">Adjuntar foto o vídeo</string>
+    <string name="cd_chat_media_search">Buscar mensajes y archivos</string>
+</resources>

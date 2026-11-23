@@ -1,0 +1,240 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    // --- VALIDATION HELPERS ---
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+             data.defaultMyName is string && data.defaultMyName.size() >= 1 && data.defaultMyName.size() <= 40;
+    }
+
+    function isValidFakeChat(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.contactName is string && data.contactName.size() >= 1 && data.contactName.size() <= 60 &&
+             data.groupChat is bool &&
+             data.statusText is string && data.statusText.size() <= 80 &&
+             data.online is bool &&
+             data.verified is bool &&
+             data.avatarEmoji is string && data.avatarEmoji.size() >= 1 && data.avatarEmoji.size() <= 16 &&
+             data.avatarColorHex is string && data.avatarColorHex.size() >= 4 && data.avatarColorHex.size() <= 12 &&
+             (!('avatarImageBase64' in data) || (data.avatarImageBase64 is string && data.avatarImageBase64.size() <= 48000)) &&
+             data.wallpaperTheme in ['CLASSIC', 'MIDNIGHT', 'MINT', 'OCEAN', 'CORAL'] &&
+             data.unreadCount is int && data.unreadCount >= 0 && data.unreadCount <= 9999 &&
+             data.pinned is bool &&
+             data.lastMessagePreview is string && data.lastMessagePreview.size() <= 300 &&
+             data.lastMessageTime is string && data.lastMessageTime.size() <= 24 &&
+             data.lastMessageSender in ['ME', 'OTHER', 'SYSTEM'] &&
+             data.lastMessageTick in ['SENT', 'DELIVERED', 'READ'];
+    }
+
+    function isValidFakeMessage(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.chatId is string && isValidId(data.chatId) &&
+             data.senderRole in ['ME', 'OTHER', 'SYSTEM'] &&
+             data.senderName is string && data.senderName.size() <= 60 &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 2000 &&
+             data.messageType in ['TEXT', 'VOICE', 'IMAGE', 'VIDEO', 'CALL_EVENT', 'SYSTEM'] &&
+             data.displayTime is string && data.displayTime.size() >= 1 && data.displayTime.size() <= 24 &&
+             data.dateLabel is string && data.dateLabel.size() <= 40 &&
+             data.tickStatus in ['SENT', 'DELIVERED', 'READ'] &&
+             (!('voiceDuration' in data) || (data.voiceDuration is string && data.voiceDuration.size() <= 16)) &&
+             (!('mediaPreviewBase64' in data) || (data.mediaPreviewBase64 is string && data.mediaPreviewBase64.size() <= 120000)) &&
+             (!('localMediaPath' in data) || (data.localMediaPath is string && data.localMediaPath.size() <= 300)) &&
+             (!('mediaFileName' in data) || (data.mediaFileName is string && data.mediaFileName.size() <= 120)) &&
+             (!('mediaDuration' in data) || (data.mediaDuration is string && data.mediaDuration.size() <= 16)) &&
+             (!('reactionEmoji' in data) || (data.reactionEmoji is string && data.reactionEmoji.size() <= 16)) &&
+             (!('replyToText' in data) || (data.replyToText is string && data.replyToText.size() <= 300)) &&
+             (!('replyToSender' in data) || (data.replyToSender is string && data.replyToSender.size() <= 60)) &&
+             data.orderIndex is int && data.orderIndex >= 0 && data.orderIndex <= 1000000000;
+    }
+
+    function isValidFakeCallRecord(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.contactName is string && data.contactName.size() >= 1 && data.contactName.size() <= 60 &&
+             data.avatarEmoji is string && data.avatarEmoji.size() >= 1 && data.avatarEmoji.size() <= 16 &&
+             data.avatarColorHex is string && data.avatarColorHex.size() >= 4 && data.avatarColorHex.size() <= 12 &&
+             (!('avatarImageBase64' in data) || (data.avatarImageBase64 is string && data.avatarImageBase64.size() <= 48000)) &&
+             data.callType in ['VOICE', 'VIDEO'] &&
+             data.direction in ['INCOMING', 'OUTGOING', 'MISSED'] &&
+             data.durationText is string && data.durationText.size() <= 40 &&
+             data.displayTime is string && data.displayTime.size() >= 1 && data.displayTime.size() <= 32;
+    }
+
+    // --- USER PROFILE ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'defaultMyName', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'defaultMyName', 'createdAt', 'updatedAt']) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isValidTimestamp(incoming().updatedAt) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidTimestamp(incoming().updatedAt) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'defaultMyName', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // --- FAKE CHATS ---
+      match /chats/{chatId} {
+        allow get: if isOwner(userId) && isValidId(chatId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(chatId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'contactName', 'groupChat', 'statusText', 'online', 'verified',
+                           'avatarEmoji', 'avatarColorHex', 'wallpaperTheme', 'unreadCount', 'pinned',
+                           'lastMessagePreview', 'lastMessageTime', 'lastMessageSender', 'lastMessageTick',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'contactName', 'groupChat', 'statusText', 'online', 'verified',
+                           'avatarEmoji', 'avatarColorHex', 'avatarImageBase64', 'wallpaperTheme',
+                           'unreadCount', 'pinned', 'lastMessagePreview', 'lastMessageTime',
+                           'lastMessageSender', 'lastMessageTick', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestamp(incoming().createdAt) &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         isValidFakeChat(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(chatId) &&
+                         isValidFakeChat(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'contactName', 'groupChat', 'statusText', 'online', 'verified',
+                           'avatarEmoji', 'avatarColorHex', 'avatarImageBase64', 'wallpaperTheme',
+                           'unreadCount', 'pinned', 'lastMessagePreview', 'lastMessageTime',
+                           'lastMessageSender', 'lastMessageTick', 'updatedAt'
+                         ]);
+
+        allow delete: if isOwner(userId) && isValidId(chatId);
+
+        // --- FAKE MESSAGES ---
+        match /messages/{messageId} {
+          allow get: if isOwner(userId) && isValidId(chatId) && isValidId(messageId);
+          allow list: if isOwner(userId) && isValidId(chatId);
+
+          allow create: if isOwner(userId) &&
+                           isValidId(chatId) &&
+                           isValidId(messageId) &&
+                           incoming().userId == userId &&
+                           incoming().chatId == chatId &&
+                           incoming().keys().hasAll([
+                             'userId', 'chatId', 'senderRole', 'senderName', 'text',
+                             'messageType', 'displayTime', 'dateLabel', 'tickStatus',
+                             'orderIndex', 'createdAt', 'updatedAt'
+                           ]) &&
+                           incoming().keys().hasOnly([
+                             'userId', 'chatId', 'senderRole', 'senderName', 'text',
+                             'messageType', 'displayTime', 'dateLabel', 'tickStatus',
+                             'voiceDuration', 'mediaPreviewBase64', 'localMediaPath',
+                             'mediaFileName', 'mediaDuration', 'reactionEmoji',
+                             'replyToText', 'replyToSender', 'orderIndex', 'createdAt', 'updatedAt'
+                           ]) &&
+                           isValidTimestamp(incoming().createdAt) &&
+                           isValidTimestamp(incoming().updatedAt) &&
+                           isValidFakeMessage(incoming());
+
+          allow update: if isOwner(userId) &&
+                           isValidId(chatId) &&
+                           isValidId(messageId) &&
+                           isValidFakeMessage(incoming()) &&
+                           incoming().userId == existing().userId &&
+                           incoming().chatId == existing().chatId &&
+                           incoming().createdAt == existing().createdAt &&
+                           isValidTimestamp(incoming().updatedAt) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'senderRole', 'senderName', 'text', 'messageType',
+                             'displayTime', 'dateLabel', 'tickStatus',
+                             'voiceDuration', 'mediaPreviewBase64', 'localMediaPath',
+                             'mediaFileName', 'mediaDuration', 'reactionEmoji',
+                             'replyToText', 'replyToSender', 'orderIndex', 'updatedAt'
+                           ]);
+
+          allow delete: if isOwner(userId) && isValidId(chatId) && isValidId(messageId);
+        }
+      }
+
+      // --- FAKE CALLS ---
+      match /fakeCalls/{callId} {
+        allow get: if isOwner(userId) && isValidId(callId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(callId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'contactName', 'avatarEmoji', 'avatarColorHex',
+                           'callType', 'direction', 'durationText', 'displayTime',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'contactName', 'avatarEmoji', 'avatarColorHex',
+                           'avatarImageBase64', 'callType', 'direction', 'durationText',
+                           'displayTime', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestamp(incoming().createdAt) &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         isValidFakeCallRecord(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(callId) &&
+                         isValidFakeCallRecord(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'contactName', 'avatarEmoji', 'avatarColorHex', 'avatarImageBase64',
+                           'callType', 'direction', 'durationText', 'displayTime', 'updatedAt'
+                         ]);
+
+        allow delete: if isOwner(userId) && isValidId(callId);
+      }
+    }
+  }
+}
