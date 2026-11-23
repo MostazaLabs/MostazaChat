@@ -15,4 +15,5 @@
     <string name="cd_send_message">Enviar mensaje</string>
     <string name="cd_attach_media">Adjuntar foto o vídeo</string>
     <string name="cd_chat_media_search">Buscar mensajes y archivos</string>
+    <string name="cd_scroll_to_bottom">Ir a los mensajes más recientes</string>
 </resources>

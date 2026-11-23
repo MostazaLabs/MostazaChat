@@ -19,8 +19,12 @@ import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,6 +90,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -104,6 +109,7 @@ import com.example.media.MediaImportHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 private enum class MediaSearchTab(val labelEs: String) {
     ALL("Todo"),
@@ -315,14 +321,21 @@ fun MediaViewerDialog(
 
     var zoomScale by remember(message.id) { mutableStateOf(1f) }
     var panOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
+    var dismissOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var viewerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    val dismissDragProgress = remember(dismissOffset) {
+        (dismissOffset.getDistance() / 360f).coerceIn(0f, 1f)
+    }
+    val backdropAlpha = (1f - dismissDragProgress * 0.55f).coerceIn(0.45f, 1f)
+    val dismissScale = (1f - dismissDragProgress * 0.12f).coerceIn(0.88f, 1f)
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            color = Color(0xFF060B0A),
+            color = Color(0xFF060B0A).copy(alpha = backdropAlpha),
             contentColor = Color.White,
             modifier = Modifier.fillMaxSize()
         ) {
@@ -408,12 +421,14 @@ fun MediaViewerDialog(
                         .fillMaxWidth()
                         .clipToBounds()
                         .onSizeChanged { viewerSize = it }
+                        .testTag("media_viewer_viewport")
                         .then(
                             if (!isVideo && (imageBitmap != null || (isGif && localFileExists))) {
                                 Modifier
                                     .pointerInput(message.id) {
                                         detectTapGestures(
                                             onDoubleTap = { tap ->
+                                                dismissOffset = Offset.Zero
                                                 if (zoomScale > 1.05f) {
                                                     zoomScale = 1f
                                                     panOffset = Offset.Zero
@@ -432,18 +447,93 @@ fun MediaViewerDialog(
                                         )
                                     }
                                     .pointerInput(message.id) {
-                                        detectTransformGestures { _, pan, zoom, _ ->
-                                            val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
-                                            if (newScale <= 1.01f) {
-                                                zoomScale = 1f
-                                                panOffset = Offset.Zero
-                                            } else {
-                                                val maxX = (viewerSize.width * (newScale - 1f)) / 2f
-                                                val maxY = (viewerSize.height * (newScale - 1f)) / 2f
-                                                val newX = (panOffset.x + pan.x).coerceIn(-maxX, maxX)
-                                                val newY = (panOffset.y + pan.y).coerceIn(-maxY, maxY)
-                                                zoomScale = newScale
-                                                panOffset = Offset(newX, newY)
+                                        awaitEachGesture {
+                                            var zoom = 1f
+                                            var pan = Offset.Zero
+                                            var pastTouchSlop = false
+                                            val touchSlop = viewConfiguration.touchSlop
+                                            val dismissThresholdPx = 44.dp.toPx()
+                                            var isDismissDragging = false
+                                            var currentDismissOffset = Offset.Zero
+                                            var wasCanceled = false
+
+                                            awaitFirstDown(requireUnconsumed = false)
+                                            do {
+                                                val event = awaitPointerEvent()
+                                                val canceled = event.changes.any { it.isConsumed }
+                                                if (canceled) {
+                                                    wasCanceled = true
+                                                } else {
+                                                    val activePointers = event.changes.count { it.pressed }
+                                                    val zoomChange = event.calculateZoom()
+                                                    val panChange = event.calculatePan()
+
+                                                    if (!pastTouchSlop) {
+                                                        zoom *= zoomChange
+                                                        pan += panChange
+
+                                                        val centroidSize = event.calculateCentroidSize(useCurrent = false)
+                                                        val zoomMotion = abs(1f - zoom) * centroidSize
+                                                        val panMotion = pan.getDistance()
+
+                                                        if (zoomMotion > touchSlop || panMotion > touchSlop) {
+                                                            pastTouchSlop = true
+                                                            isDismissDragging = activePointers == 1 &&
+                                                                zoomScale <= 1.05f &&
+                                                                abs(zoomChange - 1f) < 0.02f
+                                                        }
+                                                    }
+
+                                                    if (pastTouchSlop) {
+                                                        if (activePointers > 1 || abs(zoomChange - 1f) > 0.01f) {
+                                                            if (isDismissDragging) {
+                                                                isDismissDragging = false
+                                                                currentDismissOffset = Offset.Zero
+                                                                dismissOffset = Offset.Zero
+                                                            }
+                                                        }
+
+                                                        if (isDismissDragging) {
+                                                            if (panChange != Offset.Zero) {
+                                                                currentDismissOffset += panChange
+                                                                dismissOffset = currentDismissOffset
+                                                            }
+                                                            event.changes.forEach { change ->
+                                                                if (change.positionChanged()) {
+                                                                    change.consume()
+                                                                }
+                                                            }
+                                                        } else {
+                                                            if (zoomChange != 1f || panChange != Offset.Zero) {
+                                                                val newScale = (zoomScale * zoomChange).coerceIn(1f, 5f)
+                                                                if (newScale <= 1.01f) {
+                                                                    zoomScale = 1f
+                                                                    panOffset = Offset.Zero
+                                                                } else {
+                                                                    val maxX = (viewerSize.width * (newScale - 1f)) / 2f
+                                                                    val maxY = (viewerSize.height * (newScale - 1f)) / 2f
+                                                                    val newX = (panOffset.x + panChange.x).coerceIn(-maxX, maxX)
+                                                                    val newY = (panOffset.y + panChange.y).coerceIn(-maxY, maxY)
+                                                                    zoomScale = newScale
+                                                                    panOffset = Offset(newX, newY)
+                                                                }
+                                                            }
+                                                            event.changes.forEach { change ->
+                                                                if (change.positionChanged()) {
+                                                                    change.consume()
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } while (!canceled && event.changes.any { it.pressed })
+
+                                            if (isDismissDragging) {
+                                                val draggedDistance = currentDismissOffset.getDistance()
+                                                dismissOffset = Offset.Zero
+                                                if (!wasCanceled && draggedDistance >= dismissThresholdPx) {
+                                                    onDismiss()
+                                                }
                                             }
                                         }
                                     }
@@ -481,10 +571,11 @@ fun MediaViewerDialog(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    scaleX = zoomScale
-                                    scaleY = zoomScale
-                                    translationX = panOffset.x
-                                    translationY = panOffset.y
+                                    val effectiveScale = zoomScale * dismissScale
+                                    scaleX = effectiveScale
+                                    scaleY = effectiveScale
+                                    translationX = panOffset.x + dismissOffset.x
+                                    translationY = panOffset.y + dismissOffset.y
                                 }
                                 .testTag("media_viewer_gif")
                         )
@@ -496,10 +587,11 @@ fun MediaViewerDialog(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    scaleX = zoomScale
-                                    scaleY = zoomScale
-                                    translationX = panOffset.x
-                                    translationY = panOffset.y
+                                    val effectiveScale = zoomScale * dismissScale
+                                    scaleX = effectiveScale
+                                    scaleY = effectiveScale
+                                    translationX = panOffset.x + dismissOffset.x
+                                    translationY = panOffset.y + dismissOffset.y
                                 }
                                 .testTag("media_viewer_image")
                         )

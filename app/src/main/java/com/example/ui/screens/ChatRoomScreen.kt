@@ -52,6 +52,7 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
@@ -90,6 +91,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -226,6 +228,25 @@ fun ChatRoomScreen(
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.scrollToItem(messages.size - 1)
+        }
+    }
+
+    val showScrollToBottom by remember(messages.size, isSimulatingTyping) {
+        derivedStateOf {
+            if (messages.isEmpty()) {
+                false
+            } else {
+                val totalCount = messages.size + if (isSimulatingTyping) 1 else 0
+                val lastIndex = totalCount - 1
+                val layoutInfo = listState.layoutInfo
+                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+                listState.canScrollForward && (
+                    lastVisible == null ||
+                        lastVisible.index < lastIndex ||
+                        (lastVisible.index == lastIndex &&
+                            lastVisible.offset + lastVisible.size > layoutInfo.viewportEndOffset + 80)
+                    )
+            }
         }
     }
 
@@ -506,6 +527,31 @@ fun ChatRoomScreen(
                             Icon(
                                 imageVector = Icons.Rounded.VisibilityOff,
                                 contentDescription = "Salir de Modo Captura"
+                            )
+                        }
+                    }
+
+                    if (showScrollToBottom) {
+                        SmallFloatingActionButton(
+                            onClick = {
+                                scope.launch {
+                                    val targetIndex = (messages.size - 1 + if (isSimulatingTyping) 1 else 0)
+                                        .coerceAtLeast(0)
+                                    listState.scrollToItem(targetIndex, scrollOffset = 100_000)
+                                }
+                            },
+                            shape = CircleShape,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 12.dp, bottom = 12.dp)
+                                .testTag("scroll_to_bottom_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardDoubleArrowDown,
+                                contentDescription = stringResource(R.string.cd_scroll_to_bottom),
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
