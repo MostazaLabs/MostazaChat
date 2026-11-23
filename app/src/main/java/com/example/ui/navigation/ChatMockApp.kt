@@ -59,6 +59,7 @@ import com.example.auth.AuthScreen
 import com.example.auth.ExternalSessionConfig
 import com.example.auth.ExternalSessionStore
 import com.example.auth.authStateFlow
+import com.example.auth.firebaseAuthOrNull
 import com.example.data.ChatDataRepository
 import com.example.data.firestore.ChatMockRepository
 import com.example.data.local.LocalChatMockRepository
@@ -70,9 +71,8 @@ import com.example.ui.screens.FakeCallOverlayScreen
 import com.example.ui.viewmodel.CallsViewModel
 import com.example.ui.viewmodel.ChatRoomViewModel
 import com.example.ui.viewmodel.ChatsHomeViewModel
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 private const val ROUTE_CHATS = "chats"
@@ -111,8 +111,9 @@ fun ChatMockApp() {
     var externalSession by remember { mutableStateOf(ExternalSessionStore.load(context)) }
     var pendingAutoImportConfig by remember { mutableStateOf<ExternalSessionConfig?>(null) }
 
-    val auth = Firebase.auth
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    val auth = remember(context) { firebaseAuthOrNull(context) }
+    val currentUser by (auth?.authStateFlow() ?: remember { flowOf(null) })
+        .collectAsStateWithLifecycle(initialValue = auth?.currentUser)
     val user = currentUser
 
     LaunchedEffect(user?.uid) {
