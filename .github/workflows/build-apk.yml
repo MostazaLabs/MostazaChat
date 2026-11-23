@@ -63,6 +63,21 @@ jobs:
             fi
           fi
 
+      - name: Restore google-services.json from secret if missing
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            if printf '%s' "$GOOGLE_SERVICES_JSON" | grep -q '{'; then
+              printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            else
+              printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d '\r\n ' | base64 --decode > app/google-services.json
+            fi
+          fi
+          if [ ! -f app/google-services.json ]; then
+            echo "::warning::app/google-services.json no está presente; Google Sign-In quedará desactivado en este APK. Configura el secreto GOOGLE_SERVICES_JSON en GitHub Actions."
+          fi
+
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 

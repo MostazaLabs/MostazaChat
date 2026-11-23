@@ -64,7 +64,11 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 }
 
 internal fun firebaseAuthOrNull(context: Context): FirebaseAuth? {
-    return if (FirebaseApp.getApps(context.applicationContext).isNotEmpty()) {
+    val appCtx = context.applicationContext
+    if (FirebaseApp.getApps(appCtx).isEmpty()) {
+        runCatching { FirebaseApp.initializeApp(appCtx) }
+    }
+    return if (FirebaseApp.getApps(appCtx).isNotEmpty()) {
         runCatching { Firebase.auth }.getOrNull()
     } else {
         null
@@ -131,11 +135,11 @@ fun onGoogleSignInClicked(
     onAuthCancelled: () -> Unit = {}
 ) {
     val auth = firebaseAuthOrNull(context) ?: run {
-        onAuthError("Google Sign-In requiere google-services.json. Usa el modo invitado local u otras nubes/remoto.")
+        onAuthError("Este APK se compiló sin google-services.json. Configura GOOGLE_SERVICES_JSON en GitHub o usa modo local.")
         return
     }
     val clientId = resolveDefaultWebClientId(context) ?: run {
-        onAuthError("Falta la configuración de Google Sign-In (google-services.json). Usa el modo invitado local u otras nubes/remoto.")
+        onAuthError("Falta default_web_client_id de google-services.json. Configura GOOGLE_SERVICES_JSON en GitHub o usa modo local.")
         return
     }
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
