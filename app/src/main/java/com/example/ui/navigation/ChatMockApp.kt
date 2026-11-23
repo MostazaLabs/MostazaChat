@@ -2,6 +2,7 @@ package com.example.ui.navigation
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
@@ -102,7 +103,10 @@ private fun buildTopTabs(isGuestMode: Boolean, localLabel: String = "Local"): Li
 )
 
 @Composable
-fun ChatMockApp() {
+fun ChatMockApp(
+    sharedIntent: Intent? = null,
+    onConsumeSharedIntent: () -> Unit = {}
+) {
     val context = LocalContext.current
     val prefs = remember(context) {
         context.applicationContext.getSharedPreferences(SESSION_PREFS_NAME, Context.MODE_PRIVATE)
@@ -136,6 +140,8 @@ fun ChatMockApp() {
                     externalSession = externalSession,
                     pendingAutoImportConfig = null,
                     onConsumePendingAutoImport = {},
+                    sharedIntent = sharedIntent,
+                    onConsumeSharedIntent = onConsumeSharedIntent,
                     onUpdateExternalSession = { updated, _ ->
                         ExternalSessionStore.save(context, updated)
                         externalSession = updated
@@ -160,6 +166,8 @@ fun ChatMockApp() {
                     externalSession = activeExt,
                     pendingAutoImportConfig = pendingAutoImportConfig,
                     onConsumePendingAutoImport = { pendingAutoImportConfig = null },
+                    sharedIntent = sharedIntent,
+                    onConsumeSharedIntent = onConsumeSharedIntent,
                     onUpdateExternalSession = { updated, _ ->
                         ExternalSessionStore.save(context, updated)
                         externalSession = updated
@@ -216,6 +224,8 @@ private fun ChatMockWorkspaceRoot(
     externalSession: ExternalSessionConfig?,
     pendingAutoImportConfig: ExternalSessionConfig?,
     onConsumePendingAutoImport: () -> Unit,
+    sharedIntent: Intent?,
+    onConsumeSharedIntent: () -> Unit,
     onUpdateExternalSession: (config: ExternalSessionConfig, importImmediately: Boolean) -> Unit,
     onExitGuestMode: () -> Unit
 ) {
@@ -278,6 +288,18 @@ private fun ChatMockWorkspaceRoot(
                     navController.navigate("chat/$chatId")
                 }
             )
+        }
+    }
+
+    LaunchedEffect(sharedIntent, currentDestination?.route) {
+        if (sharedIntent != null && currentDestination?.route != ROUTE_CHATS) {
+            navController.navigate(ROUTE_CHATS) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
         }
     }
 
@@ -378,6 +400,8 @@ private fun ChatMockWorkspaceRoot(
                                 viewModel = homeViewModel,
                                 isGuestMode = isGuestMode,
                                 localModeLabel = localBadgeLabel,
+                                sharedIntent = sharedIntent,
+                                onConsumeSharedIntent = onConsumeSharedIntent,
                                 onOpenChat = { chatId ->
                                     navController.navigate("chat/$chatId")
                                 },

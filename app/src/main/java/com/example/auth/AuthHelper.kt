@@ -2,7 +2,12 @@ package com.example.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.SystemClock
 import android.util.Log
+import java.security.MessageDigest
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +40,8 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
@@ -79,6 +86,33 @@ private fun resolveDefaultWebClientId(context: Context): String? {
     val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
     if (resId == 0) return null
     return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+@Suppress("DEPRECATION")
+private fun getSigningSha1(context: Context): String? {
+    return runCatching {
+        val pm = context.packageManager
+        val signature = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val info = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val signingInfo = info.signingInfo ?: return null
+            if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners.firstOrNull()
+            } else {
+                signingInfo.signingCertificateHistory.firstOrNull()
+            }
+        } else {
+            val info = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+            info.signatures?.firstOrNull()
+        } ?: return null
+        val digest = MessageDigest.getInstance("SHA-1").digest(signature.toByteArray())
+        digest.joinToString(":") { b -> "%02X".format(b) }
+    }.getOrNull()
 }
 
 fun attemptAutoSignIn(
@@ -148,8 +182,9 @@ fun onGoogleSignInClicked(
         .build()
 
     scope.launch {
+        val startMs = SystemClock.elapsedRealtime()
         try {
-            val activity = context as? Activity
+            val activity = context.findActivity()
                 ?: throw IllegalStateException("Se requiere un Activity context para iniciar sesión")
             val cred = credentialManager.getCredential(activity, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -160,8 +195,30 @@ fun onGoogleSignInClicked(
                 onAuthError("Tipo de credencial inesperado")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
-            onAuthCancelled()
+            val elapsedMs = SystemClock.elapsedRealtime() - startMs
+            Log.w("Auth", "Google Sign-In cancelled or dismissed after ${elapsedMs}ms: ${e.message}", e)
+            if (elapsedMs < 350L) {
+                val sha1 = getSigningSha1(context).orEmpty()
+                val shaHint = if (sha1.isNotBlank()) " (SHA-1 APK: $sha1)" else ""
+                onAuthError(
+                    "Google Play Services rechazó la ventana de acceso$shaHint. Revisa la firma del APK y google-services.json."
+                )
+            } else {
+                onAuthCancelled()
+            }
+        } catch (e: NoCredentialException) {
+            val sha1 = getSigningSha1(context).orEmpty()
+            Log.e("Auth", "NoCredentialException ($sha1): ${e.message}", e)
+            val shaHint = if (sha1.isNotBlank()) " SHA-1 del APK: $sha1." else ""
+            onAuthError(
+                "No se pudo conectar con Google Play Services o no hay cuenta Google disponible.$shaHint"
+            )
+        } catch (e: GetCredentialException) {
+            val sha1 = getSigningSha1(context).orEmpty()
+            Log.e("Auth", "GetCredentialException ($sha1): ${e.type} - ${e.message}", e)
+            val detail = e.localizedMessage?.take(120) ?: e.javaClass.simpleName
+            val shaHint = if (sha1.isNotBlank()) " (SHA-1: $sha1)" else ""
+            onAuthError("Error de Google Services: $detail$shaHint")
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed", e)
             onAuthError(e.localizedMessage ?: "No se pudo iniciar sesión con Google")

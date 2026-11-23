@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,7 +28,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Message
 import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
@@ -61,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,6 +98,7 @@ import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
 import com.example.ui.components.ContactAvatarPreviewDialog
 import com.example.ui.components.ImportedContact
+import com.example.ui.components.MessagingCloneSheet
 import com.example.ui.components.TickStatusIcon
 import com.example.ui.components.VerifiedIcon
 import com.example.ui.components.WhatsAppImportDialog
@@ -106,6 +112,8 @@ fun ChatsListScreen(
     viewModel: ChatsHomeViewModel,
     isGuestMode: Boolean = false,
     localModeLabel: String = "Local",
+    sharedIntent: Intent? = null,
+    onConsumeSharedIntent: () -> Unit = {},
     onOpenChat: (String) -> Unit,
     onStartFakeCall: (FakeChat, CallType) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
@@ -120,11 +128,31 @@ fun ChatsListScreen(
     val scope = rememberCoroutineScope()
     var showSearchBar by remember { mutableStateOf(false) }
     var showCreateSheet by remember { mutableStateOf(false) }
+    var showMessagingCloneSheet by remember { mutableStateOf(false) }
     var importedContactDraft by remember { mutableStateOf<ImportedContact?>(null) }
     var parsedWhatsAppDraft by remember { mutableStateOf<ParsedWhatsAppChat?>(null) }
     var isParsingWhatsAppTxt by remember { mutableStateOf(false) }
     var previewingAvatarChat by remember { mutableStateOf<FakeChat?>(null) }
     var editingChatFromPreview by remember { mutableStateOf<FakeChat?>(null) }
+
+    LaunchedEffect(sharedIntent) {
+        val intent = sharedIntent ?: return@LaunchedEffect
+        isParsingWhatsAppTxt = true
+        val result = WhatsAppTxtParser.parseSharedIntent(context, intent)
+        isParsingWhatsAppTxt = false
+        onConsumeSharedIntent()
+        if (result == null) {
+            viewModel.emitStatusMessage("El contenido compartido no contiene mensajes compatibles (.txt, .zip o texto).")
+        } else {
+            result
+                .onSuccess { parsed -> parsedWhatsAppDraft = parsed }
+                .onFailure { err ->
+                    viewModel.emitStatusMessage(
+                        err.localizedMessage ?: "No se pudo leer el chat compartido"
+                    )
+                }
+        }
+    }
 
     val pickContactLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -188,7 +216,7 @@ fun ChatsListScreen(
 
     val launchWhatsAppTxtPicker = {
         try {
-            pickWhatsAppTxtLauncher.launch(arrayOf("text/plain", "*/*"))
+            pickWhatsAppTxtLauncher.launch(arrayOf("text/plain", "application/zip", "*/*"))
         } catch (_: Exception) {
             viewModel.emitStatusMessage("No se pudo abrir el selector de archivos")
         }
@@ -241,12 +269,12 @@ fun ChatsListScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = launchWhatsAppTxtPicker,
+                        onClick = { showMessagingCloneSheet = true },
                         modifier = Modifier.testTag("import_whatsapp_txt_button")
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Description,
-                            contentDescription = "Importar chat .txt de WhatsApp"
+                            contentDescription = "Clonar chat desde app de mensajería o archivo"
                         )
                     }
                     IconButton(
@@ -400,7 +428,7 @@ fun ChatsListScreen(
                                     showCreateSheet = true
                                 },
                                 onImportContact = launchContactPicker,
-                                onImportWhatsAppTxt = launchWhatsAppTxtPicker,
+                                onCloneFromMessagingApp = { showMessagingCloneSheet = true },
                                 onCreateSample = {
                                     viewModel.createSampleChat(onCreated = onOpenChat)
                                 }
@@ -568,6 +596,18 @@ fun ChatsListScreen(
                     onTxtImported = onOpenChat
                 )
             }
+        )
+    }
+
+    if (showMessagingCloneSheet) {
+        MessagingCloneSheet(
+            onDismiss = { showMessagingCloneSheet = false },
+            onPickExportFiles = launchWhatsAppTxtPicker,
+            onParsedConversation = { parsed ->
+                showMessagingCloneSheet = false
+                parsedWhatsAppDraft = parsed
+            },
+            onError = { msg -> viewModel.emitStatusMessage(msg) }
         )
     }
 }
@@ -785,12 +825,13 @@ private fun EmptyChatsState(
     isGuestMode: Boolean,
     onCreateNew: () -> Unit,
     onImportContact: () -> Unit,
-    onImportWhatsAppTxt: () -> Unit,
+    onCloneFromMessagingApp: () -> Unit,
     onCreateSample: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -817,9 +858,9 @@ private fun EmptyChatsState(
         Spacer(Modifier.height(8.dp))
         Text(
             text = if (isGuestMode) {
-                "Clona contactos de tu agenda, importa historiales .txt de WhatsApp o créalos desde cero. Todo se guarda localmente en este teléfono."
+                "Clona contactos de tu agenda, importa chats desde WhatsApp/Telegram o créalos desde cero. Todo se guarda localmente en este teléfono."
             } else {
-                "Clona contactos de tu agenda, importa historiales .txt de WhatsApp o créalos desde cero con sincronización en la nube."
+                "Clona contactos de tu agenda, importa chats desde WhatsApp/Telegram o créalos desde cero con sincronización en la nube."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -828,35 +869,38 @@ private fun EmptyChatsState(
         Button(
             onClick = onImportContact,
             enabled = !isBusy,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
                 .testTag("empty_import_contact_button")
         ) {
             Icon(Icons.Rounded.Contacts, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Clonar contacto de mi agenda")
+            Text("Clonar desde tu agenda de contactos")
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            onClick = onImportWhatsAppTxt,
+            onClick = onCloneFromMessagingApp,
             enabled = !isBusy,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
-                .testTag("empty_import_whatsapp_txt_button")
+                .heightIn(min = 48.dp)
+                .testTag("empty_clone_messaging_app_button")
         ) {
-            Icon(Icons.Rounded.Description, contentDescription = null)
+            Icon(Icons.AutoMirrored.Rounded.Message, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Importar chat de WhatsApp (.txt)")
+            Text("Clonar chat desde app de mensajería")
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = onCreateNew,
             enabled = !isBusy,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
                 .testTag("empty_create_chat_button")
         ) {
             Icon(Icons.Rounded.AddComment, contentDescription = null)
@@ -867,9 +911,10 @@ private fun EmptyChatsState(
         OutlinedButton(
             onClick = onCreateSample,
             enabled = !isBusy,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
                 .testTag("empty_sample_chat_button")
         ) {
             Icon(Icons.Rounded.AutoAwesome, contentDescription = null)

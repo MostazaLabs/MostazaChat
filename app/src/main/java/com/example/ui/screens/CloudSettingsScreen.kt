@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +31,6 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PhoneAndroid
-import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material3.Button
@@ -61,21 +59,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.R
 import com.example.auth.ExternalSessionConfig
 import com.example.auth.GoogleSignInButton
 import com.example.auth.signOut
 import com.example.data.model.UiState
-import com.example.media.MediaImportHelper
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.WhatsAppTxtParser
 import com.example.ui.components.BackupProviderPickerSheet
@@ -658,7 +652,7 @@ fun CloudSettingsScreen(
                             }
                             OutlinedButton(
                                 onClick = {
-                                    openWhatsAppTxtLauncher.launch(arrayOf("text/plain", "*/*"))
+                                    openWhatsAppTxtLauncher.launch(arrayOf("text/plain", "application/zip", "*/*"))
                                 },
                                 enabled = !isBusy && !isParsingWhatsAppTxt,
                                 modifier = Modifier
@@ -668,96 +662,7 @@ fun CloudSettingsScreen(
                             ) {
                                 Icon(Icons.Rounded.Description, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
-                                Text("Importar chat de WhatsApp (.txt)")
-                            }
-                        }
-                    }
-                }
-
-                // Gallery Screenshot Export Card
-                item {
-                    Card(
-                        shape = MaterialTheme.shapes.large,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.user_saved_screenshot),
-                                    contentDescription = "Captura adjunta para galería",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Captura en la galería del dispositivo",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "Guarda la captura en Pictures/MostazaChat para usarla desde Fotos o en tus chats.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        val res = MediaImportHelper.saveDrawableToGallery(
-                                            context = context,
-                                            drawableResId = R.drawable.user_saved_screenshot,
-                                            displayName = "MostazaChat_Captura_${System.currentTimeMillis()}.png"
-                                        )
-                                        res.onSuccess {
-                                            onShowMessage("Captura guardada en la galería (Pictures/MostazaChat)")
-                                        }.onFailure { err ->
-                                            onShowMessage("No se pudo guardar: ${err.localizedMessage}")
-                                        }
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("save_screenshot_gallery_button")
-                            ) {
-                                Icon(Icons.Rounded.PhotoLibrary, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Guardar captura en galería")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        val res = MediaImportHelper.saveRawTextToDownloads(
-                                            context = context,
-                                            rawResId = R.raw.chat_whatsapp_cayetana,
-                                            displayName = "Chat de WhatsApp con Cayetana Oteyza.txt"
-                                        )
-                                        res.onSuccess {
-                                            onShowMessage("Archivo guardado en Descargas/MostazaChat")
-                                        }.onFailure { err ->
-                                            onShowMessage("No se pudo guardar el .txt: ${err.localizedMessage}")
-                                        }
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("save_sample_txt_downloads_button")
-                            ) {
-                                Icon(Icons.Rounded.Description, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Guardar chat .txt en Descargas")
+                                Text("Importar chat de WhatsApp (.txt / .zip)")
                             }
                         }
                     }

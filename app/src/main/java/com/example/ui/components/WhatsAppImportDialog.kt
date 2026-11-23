@@ -73,7 +73,7 @@ fun WhatsAppImportDialog(
                 tint = MaterialTheme.colorScheme.primary
             )
         },
-        title = { Text("Importar chat de WhatsApp (.txt)") },
+        title = { Text("Importar conversación") },
         text = {
             Column(
                 modifier = Modifier
@@ -122,7 +122,7 @@ fun WhatsAppImportDialog(
 
                 if (parsedChat.participants.isNotEmpty()) {
                     Text(
-                        text = "¿Quién eres tú en este archivo?",
+                        text = "¿Quién eres tú en este chat?",
                         style = MaterialTheme.typography.labelLarge
                     )
                     Text(

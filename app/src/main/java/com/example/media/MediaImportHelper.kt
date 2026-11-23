@@ -13,11 +13,8 @@ import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Base64
-import androidx.annotation.DrawableRes
-import androidx.annotation.RawRes
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import com.example.R
 import com.example.data.model.MessageType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -374,88 +371,6 @@ object MediaImportHelper {
         val targetH = (h * scale).toInt().coerceAtLeast(1)
         val scaled = if (scale < 1f) Bitmap.createScaledBitmap(source, targetW, targetH, true) else source
         return compressToBase64(scaled, maxChars)
-    }
-
-    suspend fun ensureAttachedScreenshotSavedToGallery(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        val prefs = context.getSharedPreferences("mostazachat_media_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("saved_attached_screenshot_v1", false)) return
-        val result = saveDrawableToGallery(
-            context = context,
-            drawableResId = R.drawable.user_saved_screenshot,
-            displayName = "MostazaChat_Screenshot_${System.currentTimeMillis()}.png"
-        )
-        if (result.isSuccess) {
-            prefs.edit().putBoolean("saved_attached_screenshot_v1", true).apply()
-        }
-    }
-
-    suspend fun ensureAttachedWhatsAppTxtSavedToDownloads(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        val prefs = context.getSharedPreferences("mostazachat_media_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("saved_cayetana_whatsapp_txt_v1", false)) return
-        val result = saveRawTextToDownloads(
-            context = context,
-            rawResId = R.raw.chat_whatsapp_cayetana,
-            displayName = "Chat de WhatsApp con Cayetana Oteyza.txt"
-        )
-        if (result.isSuccess) {
-            prefs.edit().putBoolean("saved_cayetana_whatsapp_txt_v1", true).apply()
-        }
-    }
-
-    suspend fun saveRawTextToDownloads(
-        context: Context,
-        @RawRes rawResId: Int,
-        displayName: String = "Chat de WhatsApp con Cayetana Oteyza.txt"
-    ): Result<Uri> = withContext(Dispatchers.IO) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return@withContext Result.failure(
-                UnsupportedOperationException("Requiere Android 10 o superior para guardar en Descargas sin permisos")
-            )
-        }
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, displayName)
-            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
-            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/MostazaChat")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: return@withContext Result.failure(IllegalStateException("MediaStore rechazó el archivo .txt"))
-        return@withContext try {
-            resolver.openOutputStream(uri)?.use { out ->
-                context.resources.openRawResource(rawResId).use { input ->
-                    input.copyTo(out)
-                }
-            } ?: throw IllegalStateException("No se pudo abrir el flujo de salida")
-
-            val doneValues = ContentValues().apply {
-                put(MediaStore.Downloads.IS_PENDING, 0)
-            }
-            resolver.update(uri, doneValues, null, null)
-            Result.success(uri)
-        } catch (e: Exception) {
-            try {
-                resolver.delete(uri, null, null)
-            } catch (_: Exception) {
-            }
-            Result.failure(e)
-        }
-    }
-
-    suspend fun saveDrawableToGallery(
-        context: Context,
-        @DrawableRes drawableResId: Int,
-        displayName: String = "MostazaChat_${System.currentTimeMillis()}.png"
-    ): Result<Uri> = withContext(Dispatchers.IO) {
-        try {
-            val bitmap = BitmapFactory.decodeResource(context.resources, drawableResId)
-                ?: return@withContext Result.failure(IllegalStateException("No se pudo decodificar la imagen"))
-            saveBitmapToGalleryInternal(context, bitmap, displayName)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
     }
 
     suspend fun saveChatPhotoToGallery(
