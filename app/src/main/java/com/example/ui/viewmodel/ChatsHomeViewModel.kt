@@ -12,6 +12,7 @@ import com.example.data.model.UiState
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperTheme
 import com.example.media.ParsedWhatsAppChat
+import com.example.media.PendingTxtImport
 import com.example.media.RemoteBackupClient
 import com.example.media.WhatsAppTxtParser
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -118,6 +119,7 @@ class ChatsHomeViewModel(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        pendingTxtImport: PendingTxtImport? = null,
         onCreated: (String) -> Unit
     ) {
         viewModelScope.launch {
@@ -136,10 +138,24 @@ class ChatsHomeViewModel(
                 unreadCount = unreadCount,
                 pinned = pinned
             )
-            _isBusy.value = false
             result.onSuccess { chatId ->
+                if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {
+                    repository.importWhatsAppMessagesIntoChat(
+                        userId = currentUserId,
+                        chatId = chatId,
+                        parsedMessages = pendingTxtImport.messages,
+                        myParticipantName = pendingTxtImport.selectedMe,
+                        replaceExisting = true
+                    ).onSuccess { count ->
+                        _statusMessage.value = "Chat creado con $count mensajes de .txt"
+                    }.onFailure { err ->
+                        _statusMessage.value = err.localizedMessage ?: "Chat creado, pero falló la importación del .txt"
+                    }
+                }
+                _isBusy.value = false
                 onCreated(chatId)
             }.onFailure { err ->
+                _isBusy.value = false
                 _statusMessage.value = err.localizedMessage ?: "No se pudo crear el chat"
             }
         }
@@ -183,11 +199,13 @@ class ChatsHomeViewModel(
         clearAvatarPhoto: Boolean,
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
-        pinned: Boolean
+        pinned: Boolean,
+        pendingTxtImport: PendingTxtImport? = null,
+        onTxtImported: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
             _isBusy.value = true
-            repository.updateChatMeta(
+            val metaResult = repository.updateChatMeta(
                 userId = currentUserId,
                 chatId = chatId,
                 contactName = contactName,
@@ -202,7 +220,25 @@ class ChatsHomeViewModel(
                 wallpaperTheme = wallpaperTheme,
                 unreadCount = unreadCount,
                 pinned = pinned
-            ).onFailure { err ->
+            )
+            metaResult.onSuccess {
+                if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {
+                    repository.importWhatsAppMessagesIntoChat(
+                        userId = currentUserId,
+                        chatId = chatId,
+                        parsedMessages = pendingTxtImport.messages,
+                        myParticipantName = pendingTxtImport.selectedMe,
+                        replaceExisting = pendingTxtImport.replaceExisting
+                    ).onSuccess { count ->
+                        _statusMessage.value = "Se cargaron $count mensajes de .txt en $contactName"
+                        _isBusy.value = false
+                        onTxtImported(chatId)
+                        return@launch
+                    }.onFailure { err ->
+                        _statusMessage.value = err.localizedMessage ?: "Opciones guardadas, pero falló la carga del .txt"
+                    }
+                }
+            }.onFailure { err ->
                 _statusMessage.value = err.localizedMessage ?: "No se pudo actualizar el contacto"
             }
             _isBusy.value = false

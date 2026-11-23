@@ -14,6 +14,7 @@ import com.example.data.model.TickStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperTheme
 import com.example.media.ParsedWhatsAppChat
+import com.example.media.ParsedWhatsAppMessage
 import com.google.firebase.Timestamp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -328,7 +329,7 @@ class LocalChatMockRepository(
                 pinned = pinned ?: current.pinned,
                 updatedAtMillis = System.currentTimeMillis()
             )
-            dao.upsertChat(updated)
+            dao.updateChat(updated)
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -439,22 +440,62 @@ class LocalChatMockRepository(
         senderName: String,
         tickStatus: TickStatus,
         reactionEmoji: String?,
+        messageType: MessageType?,
+        mediaPreviewBase64: String?,
+        localMediaPath: String?,
+        mediaFileName: String?,
+        mediaDuration: String?,
+        clearMedia: Boolean,
     ): Result<Unit> {
         return try {
             val safeText = text.trim().take(2000)
             require(safeText.isNotEmpty()) { "El texto del mensaje no puede estar vacío" }
             val current = dao.getMessageOnce(userId, chatId, messageId)
                 ?: return Result.failure(IllegalStateException("Mensaje no encontrado"))
-            val updated = current.copy(
-                text = safeText,
-                displayTime = displayTime.trim().ifBlank { currentTimeString() }.take(24),
-                dateLabel = dateLabel.trim().ifBlank { "HOY" }.take(40),
-                senderRole = senderRole.name,
-                senderName = senderName.trim().take(60),
-                tickStatus = tickStatus.name,
-                reactionEmoji = reactionEmoji?.trim()?.takeIf { it.isNotEmpty() }?.take(16),
-                updatedAtMillis = System.currentTimeMillis()
-            )
+            val updated = when {
+                clearMedia -> current.copy(
+                    text = safeText,
+                    messageType = MessageType.TEXT.name,
+                    displayTime = displayTime.trim().ifBlank { currentTimeString() }.take(24),
+                    dateLabel = dateLabel.trim().ifBlank { "HOY" }.take(40),
+                    senderRole = senderRole.name,
+                    senderName = senderName.trim().take(60),
+                    tickStatus = tickStatus.name,
+                    reactionEmoji = reactionEmoji?.trim()?.takeIf { it.isNotEmpty() }?.take(16),
+                    voiceDuration = null,
+                    mediaPreviewBase64 = null,
+                    localMediaPath = null,
+                    mediaFileName = null,
+                    mediaDuration = null,
+                    updatedAtMillis = System.currentTimeMillis()
+                )
+                messageType != null -> current.copy(
+                    text = safeText,
+                    messageType = messageType.name,
+                    displayTime = displayTime.trim().ifBlank { currentTimeString() }.take(24),
+                    dateLabel = dateLabel.trim().ifBlank { "HOY" }.take(40),
+                    senderRole = senderRole.name,
+                    senderName = senderName.trim().take(60),
+                    tickStatus = tickStatus.name,
+                    reactionEmoji = reactionEmoji?.trim()?.takeIf { it.isNotEmpty() }?.take(16),
+                    voiceDuration = null,
+                    mediaPreviewBase64 = mediaPreviewBase64?.takeIf { it.length <= 120000 },
+                    localMediaPath = localMediaPath?.take(300),
+                    mediaFileName = mediaFileName?.take(120),
+                    mediaDuration = mediaDuration?.take(16),
+                    updatedAtMillis = System.currentTimeMillis()
+                )
+                else -> current.copy(
+                    text = safeText,
+                    displayTime = displayTime.trim().ifBlank { currentTimeString() }.take(24),
+                    dateLabel = dateLabel.trim().ifBlank { "HOY" }.take(40),
+                    senderRole = senderRole.name,
+                    senderName = senderName.trim().take(60),
+                    tickStatus = tickStatus.name,
+                    reactionEmoji = reactionEmoji?.trim()?.takeIf { it.isNotEmpty() }?.take(16),
+                    updatedAtMillis = System.currentTimeMillis()
+                )
+            }
             dao.upsertMessage(updated)
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -762,6 +803,90 @@ class LocalChatMockRepository(
 
             dao.insertChatWithMessages(chatEntity, messageEntities)
             Result.success(chatId to messageEntities.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun importWhatsAppMessagesIntoChat(
+        userId: String,
+        chatId: String,
+        parsedMessages: List<ParsedWhatsAppMessage>,
+        myParticipantName: String?,
+        replaceExisting: Boolean
+    ): Result<Int> {
+        return try {
+            if (parsedMessages.isEmpty()) {
+                return Result.failure(IllegalArgumentException("No hay mensajes en los archivos .txt seleccionados"))
+            }
+            val currentChat = dao.getChatOnce(userId, chatId)
+                ?: return Result.failure(IllegalStateException("Conversación no encontrada"))
+            val now = System.currentTimeMillis()
+
+            val startOrder = if (replaceExisting) {
+                0L
+            } else {
+                dao.getMessagesOnce(userId, chatId).maxOfOrNull { it.orderIndex } ?: 0L
+            }
+
+            val messageEntities = parsedMessages.mapIndexed { idx, item ->
+                val role = when {
+                    item.isSystem -> SenderRole.SYSTEM
+                    myParticipantName != null && item.senderName.equals(myParticipantName, ignoreCase = true) -> SenderRole.ME
+                    else -> SenderRole.OTHER
+                }
+                val msgType = if (item.isSystem) MessageType.SYSTEM else MessageType.TEXT
+                val safeText = item.text.trim().ifBlank { " " }.take(2000)
+                LocalMessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    userId = userId,
+                    chatId = chatId,
+                    senderRole = role.name,
+                    senderName = item.senderName.trim().take(60),
+                    text = safeText,
+                    messageType = msgType.name,
+                    displayTime = item.timeLabel.trim().ifBlank { "12:00" }.take(24),
+                    dateLabel = item.dateLabel.trim().ifBlank { "HOY" }.take(40),
+                    tickStatus = TickStatus.READ.name,
+                    voiceDuration = null,
+                    mediaPreviewBase64 = null,
+                    localMediaPath = null,
+                    mediaFileName = null,
+                    mediaDuration = null,
+                    reactionEmoji = null,
+                    replyToText = null,
+                    replyToSender = null,
+                    orderIndex = startOrder + idx + 1L,
+                    createdAtMillis = now + idx,
+                    updatedAtMillis = now + idx
+                )
+            }
+
+            val lastParsed = parsedMessages.last()
+            val lastSenderRole = when {
+                lastParsed.isSystem -> SenderRole.SYSTEM
+                myParticipantName != null && lastParsed.senderName.equals(myParticipantName, ignoreCase = true) -> SenderRole.ME
+                else -> SenderRole.OTHER
+            }
+            val lastPreview = lastParsed.text.replace('\n', ' ').trim().ifBlank { "Chat importado de WhatsApp" }.take(300)
+            val lastTime = lastParsed.timeLabel.trim().ifBlank { currentTimeString() }.take(24)
+
+            val updatedChat = currentChat.copy(
+                lastMessagePreview = lastPreview,
+                lastMessageTime = lastTime,
+                lastMessageSender = lastSenderRole.name,
+                lastMessageTick = TickStatus.READ.name,
+                updatedAtMillis = now
+            )
+
+            dao.replaceOrAppendChatMessages(
+                chat = updatedChat,
+                messages = messageEntities,
+                replaceExisting = replaceExisting
+            )
+            Result.success(messageEntities.size)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

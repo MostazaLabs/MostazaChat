@@ -15,6 +15,7 @@ import com.example.data.model.TickStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperTheme
 import com.example.media.ParsedWhatsAppChat
+import com.example.media.ParsedWhatsAppMessage
 import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
@@ -23,6 +24,7 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -533,6 +535,12 @@ class ChatMockRepository(
         senderName: String,
         tickStatus: TickStatus,
         reactionEmoji: String?,
+        messageType: MessageType?,
+        mediaPreviewBase64: String?,
+        localMediaPath: String?,
+        mediaFileName: String?,
+        mediaDuration: String?,
+        clearMedia: Boolean,
     ): Result<Unit> {
         val docPath = "users/$userId/chats/$chatId/messages/$messageId"
         return try {
@@ -558,6 +566,29 @@ class ChatMockRepository(
                 updates["reactionEmoji"] = cleanReaction
             } else {
                 updates["reactionEmoji"] = FieldValue.delete()
+            }
+            if (clearMedia) {
+                updates["messageType"] = MessageType.TEXT.name
+                updates["voiceDuration"] = FieldValue.delete()
+                updates["mediaPreviewBase64"] = FieldValue.delete()
+                updates["localMediaPath"] = FieldValue.delete()
+                updates["mediaFileName"] = FieldValue.delete()
+                updates["mediaDuration"] = FieldValue.delete()
+            } else if (messageType != null) {
+                updates["messageType"] = messageType.name
+                updates["voiceDuration"] = FieldValue.delete()
+                mediaPreviewBase64?.takeIf { it.isNotBlank() && it.length <= 120000 }?.let {
+                    updates["mediaPreviewBase64"] = it
+                } ?: run { updates["mediaPreviewBase64"] = FieldValue.delete() }
+                localMediaPath?.takeIf { it.isNotBlank() }?.let {
+                    updates["localMediaPath"] = it.take(300)
+                } ?: run { updates["localMediaPath"] = FieldValue.delete() }
+                mediaFileName?.takeIf { it.isNotBlank() }?.let {
+                    updates["mediaFileName"] = it.take(120)
+                } ?: run { updates["mediaFileName"] = FieldValue.delete() }
+                mediaDuration?.takeIf { it.isNotBlank() }?.let {
+                    updates["mediaDuration"] = it.take(16)
+                } ?: run { updates["mediaDuration"] = FieldValue.delete() }
             }
             msgRef.update(updates).await()
             Result.success(Unit)
@@ -924,6 +955,117 @@ class ChatMockRepository(
             }
 
             Result.success(chatId to messageEntries.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun importWhatsAppMessagesIntoChat(
+        userId: String,
+        chatId: String,
+        parsedMessages: List<ParsedWhatsAppMessage>,
+        myParticipantName: String?,
+        replaceExisting: Boolean
+    ): Result<Int> {
+        var docPath = "users/$userId/chats/$chatId"
+        return try {
+            if (parsedMessages.isEmpty()) {
+                return Result.failure(IllegalArgumentException("No hay mensajes en los archivos .txt seleccionados"))
+            }
+            val uid = requireUserId()
+            check(uid == userId) { "Sesión cambiada" }
+            require(chatId.isNotBlank()) { "chatId requerido" }
+            val chatRef = db.collection("users").document(uid).collection("chats").document(chatId)
+            docPath = chatRef.path
+
+            if (replaceExisting) {
+                val existingSnap = chatRef.collection("messages").get().await()
+                if (existingSnap.documents.isNotEmpty()) {
+                    existingSnap.documents.chunked(400).forEach { chunk ->
+                        val deleteBatch = db.batch()
+                        chunk.forEach { doc -> deleteBatch.delete(doc.reference) }
+                        deleteBatch.commit().await()
+                    }
+                }
+            }
+
+            val startOrder = if (replaceExisting) {
+                0L
+            } else {
+                val lastSnap = chatRef.collection("messages")
+                    .orderBy("orderIndex", Query.Direction.DESCENDING)
+                    .limit(1)
+                    .get()
+                    .await()
+                lastSnap.documents.firstOrNull()?.getLong("orderIndex") ?: 0L
+            }
+
+            val messageEntries = parsedMessages.mapIndexed { idx, item ->
+                val role = when {
+                    item.isSystem -> SenderRole.SYSTEM
+                    myParticipantName != null && item.senderName.equals(myParticipantName, ignoreCase = true) -> SenderRole.ME
+                    else -> SenderRole.OTHER
+                }
+                val msgType = if (item.isSystem) MessageType.SYSTEM else MessageType.TEXT
+                val safeText = item.text.trim().ifBlank { " " }.take(2000)
+                mapOf(
+                    "userId" to uid,
+                    "chatId" to chatId,
+                    "senderRole" to role.name,
+                    "senderName" to item.senderName.trim().take(60),
+                    "text" to safeText,
+                    "messageType" to msgType.name,
+                    "displayTime" to item.timeLabel.trim().ifBlank { "12:00" }.take(24),
+                    "dateLabel" to item.dateLabel.trim().ifBlank { "HOY" }.take(40),
+                    "tickStatus" to TickStatus.READ.name,
+                    "orderIndex" to (startOrder + idx + 1L),
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                )
+            }
+
+            val lastParsed = parsedMessages.last()
+            val lastSenderRole = when {
+                lastParsed.isSystem -> SenderRole.SYSTEM
+                myParticipantName != null && lastParsed.senderName.equals(myParticipantName, ignoreCase = true) -> SenderRole.ME
+                else -> SenderRole.OTHER
+            }
+            val lastPreview = lastParsed.text.replace('\n', ' ').trim().ifBlank { "Chat importado de WhatsApp" }.take(300)
+            val lastTime = lastParsed.timeLabel.trim().ifBlank { currentTimeString() }.take(24)
+
+            val firstChunk = messageEntries.take(400)
+            val firstBatch = db.batch()
+            firstBatch.update(
+                chatRef,
+                mapOf(
+                    "lastMessagePreview" to lastPreview,
+                    "lastMessageTime" to lastTime,
+                    "lastMessageSender" to lastSenderRole.name,
+                    "lastMessageTick" to TickStatus.READ.name,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            firstChunk.forEach { msgMap ->
+                val msgRef = chatRef.collection("messages").document()
+                firstBatch.set(msgRef, msgMap)
+            }
+            firstBatch.commit().await()
+
+            if (messageEntries.size > 400) {
+                messageEntries.drop(400).chunked(450).forEach { chunk ->
+                    val batch = db.batch()
+                    chunk.forEach { msgMap ->
+                        val msgRef = chatRef.collection("messages").document()
+                        batch.set(msgRef, msgMap)
+                    }
+                    batch.commit().await()
+                }
+            }
+
+            Result.success(messageEntries.size)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

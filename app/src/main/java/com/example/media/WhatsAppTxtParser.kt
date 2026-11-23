@@ -24,6 +24,14 @@ data class ParsedWhatsAppChat(
     val wasTruncated: Boolean
 )
 
+data class PendingTxtImport(
+    val messages: List<ParsedWhatsAppMessage>,
+    val participants: List<String>,
+    val selectedMe: String?,
+    val replaceExisting: Boolean = true,
+    val fileCount: Int = 1
+)
+
 object WhatsAppTxtParser {
 
     private val ANDROID_HEADER_REGEX = Regex(

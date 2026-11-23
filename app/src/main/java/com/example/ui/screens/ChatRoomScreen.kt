@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -69,6 +70,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -133,8 +135,14 @@ import com.example.ui.theme.BubbleMeLight
 import com.example.ui.theme.BubbleOtherDark
 import com.example.ui.theme.BubbleOtherLight
 import com.example.ui.viewmodel.ChatRoomViewModel
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -174,11 +182,40 @@ fun ChatRoomScreen(
     var showTimeDialog by remember { mutableStateOf(false) }
     var showDelayedReplyDialog by remember { mutableStateOf(false) }
 
-    val mediaPickerLauncher = rememberLauncherForActivityResult(
+    val fallbackMediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
             pendingMediaUri = uri
+        }
+    }
+
+    val mediaChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = MediaImportHelper.extractPickedUri(result.data)
+            if (uri != null) {
+                pendingMediaUri = uri
+            }
+        }
+    }
+
+    val launchChatMediaPicker = {
+        try {
+            mediaChooserLauncher.launch(
+                MediaImportHelper.createMediaChooserIntent(
+                    allowVideo = true,
+                    chooserTitle = "Elegir foto, GIF o vídeo"
+                )
+            )
+        } catch (_: Exception) {
+            try {
+                fallbackMediaPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                )
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -622,9 +659,15 @@ fun ChatRoomScreen(
                         ) {
                             if (!screenshotMode) {
                                 IconButton(
-                                    onClick = { showGalleryConsent = true },
+                                    onClick = {
+                                        if (MediaImportHelper.hasGalleryAccessConsent(context)) {
+                                            launchChatMediaPicker()
+                                        } else {
+                                            showGalleryConsent = true
+                                        }
+                                    },
                                     modifier = Modifier
-                                        .size(44.dp)
+                                        .size(48.dp)
                                         .testTag("attach_media_button")
                                 ) {
                                     Icon(
@@ -704,9 +747,11 @@ fun ChatRoomScreen(
             initialWallpaper = chat.parsedWallpaper,
             initialUnreadCount = chat.unreadCount,
             initialPinned = chat.pinned,
+            isEditingExistingChat = true,
+            myDefaultName = myDefaultName,
             onContactImportError = { msg -> viewModel.emitError(msg) },
             onDismiss = { showChatSettings = false },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned ->
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, pendingTxt ->
                 showChatSettings = false
                 viewModel.updateChatSettings(
                     contactName = name,
@@ -720,7 +765,8 @@ fun ChatRoomScreen(
                     clearAvatarPhoto = clearPhoto,
                     wallpaperTheme = wallpaper,
                     unreadCount = unread,
-                    pinned = pinned
+                    pinned = pinned,
+                    pendingTxtImport = pendingTxt
                 )
             }
         )
@@ -750,13 +796,9 @@ fun ChatRoomScreen(
         GalleryAccessConsentDialog(
             purposeText = "MostazaChat abrirá el selector seguro de Android para que elijas únicamente las fotos o vídeos que quieras añadir al chat.",
             onConfirm = {
+                MediaImportHelper.setGalleryAccessConsentGranted(context)
                 showGalleryConsent = false
-                try {
-                    mediaPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
-                    )
-                } catch (_: Exception) {
-                }
+                launchChatMediaPicker()
             },
             onDismiss = { showGalleryConsent = false }
         )
@@ -821,7 +863,7 @@ fun ChatRoomScreen(
                 editingMessage = null
                 viewModel.setReplyTarget(msg)
             },
-            onSave = { newText, newTime, newDate, newRole, newSender, newTick, newReaction ->
+            onSave = { newText, newTime, newDate, newRole, newSender, newTick, newReaction, mediaUri, clearMedia ->
                 editingMessage = null
                 viewModel.updateMessage(
                     message = msg,
@@ -831,7 +873,10 @@ fun ChatRoomScreen(
                     newRole = newRole,
                     newSenderName = newSender,
                     newTick = newTick,
-                    newReaction = newReaction
+                    newReaction = newReaction,
+                    context = context,
+                    replacementMediaUri = mediaUri,
+                    clearMedia = clearMedia
                 )
             },
             onDelete = {
@@ -1128,6 +1173,7 @@ private fun MediaBubbleContent(
     textColor: Color
 ) {
     val isVideo = message.parsedMessageType == MessageType.VIDEO
+    val isGif = !isVideo && MediaImportHelper.isGifFile(null, message.mediaFileName, message.localMediaPath)
     val localExists = remember(message.localMediaPath) {
         val path = message.localMediaPath
         !path.isNullOrBlank() && File(path).exists()
@@ -1205,10 +1251,26 @@ private fun MediaBubbleContent(
                         )
                     }
                 }
+            } else if (isGif) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.Black.copy(alpha = 0.72f),
+                    contentColor = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "GIF",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
 
-        if (message.text.isNotBlank() && message.text != "📷 Foto" && message.text != "🎬 Vídeo") {
+        if (message.text.isNotBlank() && message.text != "📷 Foto" && message.text != "🎬 Vídeo" && message.text != "🎞️ GIF") {
             Text(
                 text = message.text,
                 style = MaterialTheme.typography.bodyLarge,
@@ -1235,6 +1297,22 @@ private fun TypingIndicatorBubble(isDark: Boolean) {
     }
 }
 
+private fun isOmittedMediaPlaceholder(rawText: String): Boolean {
+    val clean = rawText
+        .replace(Regex("[\u200E\u200F\u202A-\u202E\uFEFF]"), "")
+        .trim()
+        .lowercase(Locale.ROOT)
+    return clean.contains("multimedia omitido") ||
+        clean.contains("media omitted") ||
+        clean.contains("imagen omitida") ||
+        clean.contains("image omitted") ||
+        clean.contains("gif omitido") ||
+        clean.contains("sticker omitido") ||
+        clean.contains("vídeo omitido") ||
+        clean.contains("video omitido") ||
+        clean.contains("audio omitido")
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun MessageStudioSheet(
@@ -1250,18 +1328,129 @@ private fun MessageStudioSheet(
         role: SenderRole,
         senderName: String,
         tick: TickStatus,
-        reaction: String?
+        reaction: String?,
+        replacementMediaUri: Uri?,
+        clearMedia: Boolean
     ) -> Unit,
     onDelete: () -> Unit
 ) {
-    var text by remember { mutableStateOf(message.text) }
-    var displayTime by remember { mutableStateOf(message.displayTime) }
-    var dateLabel by remember { mutableStateOf(message.dateLabel) }
-    var role by remember { mutableStateOf(message.parsedSenderRole) }
-    var senderName by remember { mutableStateOf(message.senderName) }
-    var tick by remember { mutableStateOf(message.parsedTickStatus) }
-    var reaction by remember { mutableStateOf(message.reactionEmoji) }
+    val context = LocalContext.current
+    val isOmittedPlaceholder = remember(message.id, message.text) {
+        isOmittedMediaPlaceholder(message.text)
+    }
+    val hasExistingMedia = remember(message.id, message.messageType) {
+        message.parsedMessageType == MessageType.IMAGE || message.parsedMessageType == MessageType.VIDEO
+    }
 
+    var text by remember(message.id) { mutableStateOf(message.text) }
+    var displayTime by remember(message.id) { mutableStateOf(message.displayTime) }
+    var dateLabel by remember(message.id) { mutableStateOf(message.dateLabel) }
+    var role by remember(message.id) { mutableStateOf(message.parsedSenderRole) }
+    var senderName by remember(message.id) { mutableStateOf(message.senderName) }
+    var tick by remember(message.id) { mutableStateOf(message.parsedTickStatus) }
+    var reaction by remember(message.id) { mutableStateOf(message.reactionEmoji) }
+    var pendingMediaUri by remember(message.id) { mutableStateOf<Uri?>(null) }
+    var clearExistingMedia by remember(message.id) { mutableStateOf(false) }
+    var showMediaConsent by remember { mutableStateOf(false) }
+
+    val fallbackMediaPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            pendingMediaUri = uri
+            clearExistingMedia = false
+            if (isOmittedMediaPlaceholder(text) || text == "📷 Foto" || text == "🎞️ GIF" || text == "🎬 Vídeo") {
+                text = ""
+            }
+        }
+    }
+
+    val mediaChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = MediaImportHelper.extractPickedUri(result.data)
+            if (uri != null) {
+                pendingMediaUri = uri
+                clearExistingMedia = false
+                if (isOmittedMediaPlaceholder(text) || text == "📷 Foto" || text == "🎞️ GIF" || text == "🎬 Vídeo") {
+                    text = ""
+                }
+            }
+        }
+    }
+
+    val openGallerySafely = {
+        try {
+            mediaChooserLauncher.launch(
+                MediaImportHelper.createMediaChooserIntent(
+                    allowVideo = true,
+                    chooserTitle = "Reemplazar con foto, GIF o vídeo"
+                )
+            )
+        } catch (_: Exception) {
+            try {
+                fallbackMediaPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                )
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    val selectedIsVideo = remember(pendingMediaUri) {
+        val uri = pendingMediaUri ?: return@remember false
+        MediaImportHelper.isVideoUri(context, uri)
+    }
+
+    val selectedIsGif by produceState(initialValue = false, pendingMediaUri, selectedIsVideo) {
+        val uri = pendingMediaUri
+        value = if (uri == null || selectedIsVideo) false else withContext(Dispatchers.IO) {
+            MediaImportHelper.isGifUri(context, uri)
+        }
+    }
+
+    val selectedPreviewBitmap by produceState<ImageBitmap?>(initialValue = null, pendingMediaUri, selectedIsVideo) {
+        val uri = pendingMediaUri
+        value = if (uri == null) null else withContext(Dispatchers.IO) {
+            try {
+                if (selectedIsVideo) {
+                    val retriever = MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(context, uri)
+                        val frame = retriever.getFrameAtTime(400_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            ?: retriever.frameAtTime
+                        frame?.asImageBitmap()
+                    } finally {
+                        try {
+                            retriever.release()
+                        } catch (_: Exception) {
+                        }
+                    }
+                } else {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)?.asImageBitmap()
+                    }
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    val existingPreviewBitmap by produceState<ImageBitmap?>(
+        initialValue = if (hasExistingMedia) MediaImportHelper.decodeBase64ToImageBitmap(message.mediaPreviewBase64) else null,
+        message.id,
+        hasExistingMedia,
+        clearExistingMedia
+    ) {
+        if (hasExistingMedia && !clearExistingMedia && message.parsedMessageType == MessageType.IMAGE && !message.localMediaPath.isNullOrBlank()) {
+            val loaded = MediaImportHelper.loadLocalImageBitmap(message.localMediaPath)
+            if (loaded != null) value = loaded
+        }
+    }
+
+    val willHaveMedia = pendingMediaUri != null || (hasExistingMedia && !clearExistingMedia)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -1295,6 +1484,199 @@ private fun MessageStudioSheet(
                 }
             }
 
+            if (pendingMediaUri != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF0F172A)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val bmp = selectedPreviewBitmap
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = "Vista previa seleccionada",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (selectedIsVideo) Icons.Rounded.Videocam else Icons.Rounded.Image,
+                                    contentDescription = null,
+                                    tint = Color.White
+                                )
+                            }
+                            if (selectedIsGif) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color.Black.copy(alpha = 0.72f),
+                                    contentColor = Color.White,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(4.dp)
+                                ) {
+                                    Text(
+                                        text = "GIF",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            } else if (selectedIsVideo) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when {
+                                    selectedIsVideo -> "Vídeo seleccionado"
+                                    selectedIsGif -> "GIF seleccionado"
+                                    else -> "Foto seleccionada"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Se reemplazará al pulsar «Guardar».",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                pendingMediaUri = null
+                                if (isOmittedPlaceholder && text.isBlank()) {
+                                    text = message.text
+                                }
+                            }
+                        ) {
+                            Text("Quitar")
+                        }
+                    }
+                }
+            } else if (hasExistingMedia && !clearExistingMedia) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF0F172A)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val bmp = existingPreviewBitmap
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = "Multimedia actual",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (message.parsedMessageType == MessageType.VIDEO) Icons.Rounded.Videocam else Icons.Rounded.Image,
+                                    contentDescription = null,
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (MediaImportHelper.isGifFile(null, message.mediaFileName, message.localMediaPath)) {
+                                    "GIF adjunto"
+                                } else if (message.parsedMessageType == MessageType.VIDEO) {
+                                    "Vídeo adjunto"
+                                } else {
+                                    "Foto adjunta"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Puedes cambiarlo o quitarlo",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                clearExistingMedia = true
+                                if (text == "📷 Foto" || text == "🎞️ GIF" || text == "🎬 Vídeo") {
+                                    text = "<Multimedia omitido>"
+                                }
+                            }
+                        ) {
+                            Text("Quitar", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+
+            if (isOmittedPlaceholder && !willHaveMedia) {
+                FilledTonalButton(
+                    onClick = {
+                        if (MediaImportHelper.hasGalleryAccessConsent(context)) {
+                            openGallerySafely()
+                        } else {
+                            showMediaConsent = true
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("replace_omitted_media_button")
+                ) {
+                    Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Reemplazar por foto, GIF o vídeo")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = {
+                        if (MediaImportHelper.hasGalleryAccessConsent(context)) {
+                            openGallerySafely()
+                        } else {
+                            showMediaConsent = true
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("attach_edit_media_button")
+                ) {
+                    Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (willHaveMedia) "Cambiar foto, GIF o vídeo"
+                        else "Reemplazar por foto, GIF o vídeo"
+                    )
+                }
+            }
+
             Text("Reacción rápida", style = MaterialTheme.typography.labelLarge)
             Row(
                 modifier = Modifier
@@ -1325,7 +1707,15 @@ private fun MessageStudioSheet(
             OutlinedTextField(
                 value = text,
                 onValueChange = { if (it.length <= 2000) text = it },
-                label = { Text("Contenido del mensaje") },
+                label = {
+                    Text(
+                        if (willHaveMedia) "Comentario / pie de foto (opcional)"
+                        else "Contenido del mensaje"
+                    )
+                },
+                placeholder = {
+                    if (willHaveMedia) Text("Añade un texto debajo de la foto o GIF...")
+                },
                 maxLines = 4,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1410,9 +1800,19 @@ private fun MessageStudioSheet(
                 }
                 Button(
                     onClick = {
-                        onSave(text, displayTime, dateLabel, role, senderName, tick, reaction)
+                        onSave(
+                            text,
+                            displayTime,
+                            dateLabel,
+                            role,
+                            senderName,
+                            tick,
+                            reaction,
+                            pendingMediaUri,
+                            clearExistingMedia
+                        )
                     },
-                    enabled = text.isNotBlank(),
+                    enabled = text.isNotBlank() || willHaveMedia,
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -1421,6 +1821,18 @@ private fun MessageStudioSheet(
                 }
             }
         }
+    }
+
+    if (showMediaConsent) {
+        GalleryAccessConsentDialog(
+            purposeText = "MostazaChat abrirá el selector seguro de Android para que elijas únicamente la foto, GIF o vídeo con el que reemplazar este mensaje.",
+            onConfirm = {
+                MediaImportHelper.setGalleryAccessConsentGranted(context)
+                showMediaConsent = false
+                openGallerySafely()
+            },
+            onDismiss = { showMediaConsent = false }
+        )
     }
 }
 

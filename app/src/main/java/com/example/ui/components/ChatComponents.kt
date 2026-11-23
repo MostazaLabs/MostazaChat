@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Security
@@ -51,8 +53,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -89,6 +93,8 @@ import com.example.data.model.FakeChat
 import com.example.data.model.TickStatus
 import com.example.data.model.WallpaperTheme
 import com.example.media.MediaImportHelper
+import com.example.media.PendingTxtImport
+import com.example.media.WhatsAppTxtParser
 import com.example.ui.theme.OnlineDotGreen
 import com.example.ui.theme.TickReadColor
 import com.example.ui.theme.VerifiedBadgeBlue
@@ -469,6 +475,9 @@ fun ChatEditorSheet(
     initialWallpaper: WallpaperTheme = WallpaperTheme.CLASSIC,
     initialUnreadCount: Long = 0L,
     initialPinned: Boolean = false,
+    isEditingExistingChat: Boolean = false,
+    myDefaultName: String = "Yo",
+    userDisplayName: String = "",
     allowContactImport: Boolean = false,
     onContactImportError: (String) -> Unit = {},
     onDismiss: () -> Unit,
@@ -484,7 +493,8 @@ fun ChatEditorSheet(
         clearAvatarPhoto: Boolean,
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
-        pinned: Boolean
+        pinned: Boolean,
+        pendingTxtImport: PendingTxtImport?
     ) -> Unit
 ) {
     val context = LocalContext.current
@@ -503,6 +513,8 @@ fun ChatEditorSheet(
     var unreadText by remember(initialUnreadCount) { mutableStateOf(initialUnreadCount.toString()) }
     var pinned by remember(initialPinned) { mutableStateOf(initialPinned) }
     var showGalleryConsent by remember { mutableStateOf(false) }
+    var pendingTxtImport by remember { mutableStateOf<PendingTxtImport?>(null) }
+    var isParsingTxt by remember { mutableStateOf(false) }
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -539,7 +551,7 @@ fun ChatEditorSheet(
         launchContactPickerSafely()
     }
 
-    val avatarPhotoLauncher = rememberLauncherForActivityResult(
+    val avatarFallbackPhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
@@ -551,6 +563,136 @@ fun ChatEditorSheet(
                 } else {
                     onContactImportError("No se pudo procesar la foto seleccionada")
                 }
+            }
+        }
+    }
+
+    val avatarChooserLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = MediaImportHelper.extractPickedUri(result.data)
+            if (uri != null) {
+                scope.launch {
+                    val encoded = MediaImportHelper.importAvatarFromGallery(context, uri)
+                    if (encoded != null) {
+                        avatarImageBase64 = encoded
+                        clearAvatarPhoto = false
+                    } else {
+                        onContactImportError("No se pudo procesar la foto seleccionada")
+                    }
+                }
+            }
+        }
+    }
+
+    val launchAvatarPicker = {
+        try {
+            avatarChooserLauncher.launch(
+                MediaImportHelper.createMediaChooserIntent(
+                    allowVideo = false,
+                    chooserTitle = "Elegir foto de perfil"
+                )
+            )
+        } catch (_: Exception) {
+            try {
+                avatarFallbackPhotoLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            } catch (_: Exception) {
+                onContactImportError("No se pudo abrir el selector de galería")
+            }
+        }
+    }
+
+    val txtFilesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            scope.launch {
+                isParsingTxt = true
+                val existing = pendingTxtImport
+                val accumulatedMessages = existing?.messages?.toMutableList() ?: mutableListOf()
+                val participantSet = linkedSetOf<String>()
+                existing?.participants?.forEach { participantSet.add(it) }
+                var addedFiles = 0
+                var firstError: String? = null
+                var firstSuggestedTitle: String? = null
+                var likelyGroupDetected = false
+
+                uris.forEach { uri ->
+                    WhatsAppTxtParser.parseFromUri(context, uri)
+                        .onSuccess { parsed ->
+                            addedFiles++
+                            accumulatedMessages.addAll(parsed.messages)
+                            parsed.participants.forEach { participantSet.add(it) }
+                            if (firstSuggestedTitle == null) {
+                                firstSuggestedTitle = parsed.suggestedTitle
+                            }
+                            if (parsed.isLikelyGroup) {
+                                likelyGroupDetected = true
+                            }
+                        }
+                        .onFailure { err ->
+                            if (firstError == null) {
+                                firstError = err.localizedMessage ?: "No se pudo leer uno de los archivos .txt"
+                            }
+                        }
+                }
+
+                if (addedFiles > 0) {
+                    val trimmedMessages = if (accumulatedMessages.size > 2000) {
+                        accumulatedMessages.takeLast(2000)
+                    } else {
+                        accumulatedMessages
+                    }
+                    val allParticipants = participantSet.toList()
+                    val currentContact = contactName.trim()
+                    val autoMe = existing?.selectedMe?.takeIf { it in allParticipants }
+                        ?: allParticipants.firstOrNull { name ->
+                            name.equals(myDefaultName, ignoreCase = true) ||
+                                name.equals(userDisplayName, ignoreCase = true) ||
+                                name.equals("Yo", ignoreCase = true) ||
+                                name.equals("Tú", ignoreCase = true)
+                        }
+                        ?: allParticipants.firstOrNull { name ->
+                            currentContact.isNotEmpty() &&
+                                allParticipants.size == 2 &&
+                                !name.equals(currentContact, ignoreCase = true)
+                        }
+                        ?: if (allParticipants.size == 2) allParticipants.lastOrNull() else null
+
+                    if (contactName.isBlank() && !isEditingExistingChat) {
+                        val otherName = allParticipants.firstOrNull { it != autoMe }
+                        val candidateTitle = if (!likelyGroupDetected && otherName != null && firstSuggestedTitle == "Chat de WhatsApp") {
+                            otherName
+                        } else {
+                            firstSuggestedTitle.orEmpty()
+                        }
+                        if (candidateTitle.isNotBlank()) {
+                            contactName = candidateTitle.take(60)
+                        }
+                        if (likelyGroupDetected) {
+                            groupChat = true
+                            if (statusText == "en línea") {
+                                statusText = allParticipants.take(4).joinToString(", ").take(80)
+                            }
+                        }
+                    }
+
+                    pendingTxtImport = PendingTxtImport(
+                        messages = trimmedMessages,
+                        participants = allParticipants,
+                        selectedMe = autoMe,
+                        replaceExisting = existing?.replaceExisting ?: true,
+                        fileCount = (existing?.fileCount ?: 0) + addedFiles
+                    )
+                }
+
+                if (firstError != null) {
+                    onContactImportError(firstError!!)
+                }
+                isParsingTxt = false
             }
         }
     }
@@ -649,10 +791,16 @@ fun ChatEditorSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
-                    onClick = { showGalleryConsent = true },
+                    onClick = {
+                        if (MediaImportHelper.hasGalleryAccessConsent(context)) {
+                            launchAvatarPicker()
+                        } else {
+                            showGalleryConsent = true
+                        }
+                    },
                     modifier = Modifier
                         .weight(1f)
-                        .height(46.dp)
+                        .height(48.dp)
                         .testTag("pick_avatar_photo_button")
                 ) {
                     Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -666,7 +814,7 @@ fun ChatEditorSheet(
                             clearAvatarPhoto = true
                         },
                         modifier = Modifier
-                            .height(46.dp)
+                            .height(48.dp)
                             .testTag("remove_avatar_photo_button")
                     ) {
                         Icon(
@@ -748,6 +896,109 @@ fun ChatEditorSheet(
                 }
             }
 
+            Text(
+                text = "Mensajes desde archivo .txt",
+                style = MaterialTheme.typography.labelLarge
+            )
+            OutlinedButton(
+                onClick = {
+                    try {
+                        txtFilesLauncher.launch(arrayOf("text/plain", "*/*"))
+                    } catch (_: Exception) {
+                        onContactImportError("No se pudo abrir el selector de archivos")
+                    }
+                },
+                enabled = !isParsingTxt,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("sheet_import_txt_button")
+            ) {
+                Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (pendingTxtImport == null) "Cargar archivo(s) .txt de WhatsApp"
+                    else "Añadir más archivos .txt"
+                )
+            }
+
+            if (isParsingTxt) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            pendingTxtImport?.let { pending ->
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${pending.messages.size} mensajes listos (${pending.fileCount} .txt)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Se cargarán en este chat al pulsar «$confirmLabel».",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = { pendingTxtImport = null }) {
+                                Text("Quitar")
+                            }
+                        }
+
+                        if (pending.participants.isNotEmpty()) {
+                            Text(
+                                text = "¿Quién eres tú en este .txt?",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                pending.participants.take(8).forEach { participant ->
+                                    FilterChip(
+                                        selected = pending.selectedMe == participant,
+                                        onClick = {
+                                            pendingTxtImport = pending.copy(selectedMe = participant)
+                                        },
+                                        label = { Text(participant.take(20)) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    )
+                                }
+                                FilterChip(
+                                    selected = pending.selectedMe == null,
+                                    onClick = {
+                                        pendingTxtImport = pending.copy(selectedMe = null)
+                                    },
+                                    label = { Text("Ninguno") }
+                                )
+                            }
+                        }
+
+                        if (isEditingExistingChat) {
+                            SwitchRow(
+                                label = "Reemplazar mensajes actuales del chat",
+                                checked = pending.replaceExisting,
+                                onCheckedChange = { replace ->
+                                    pendingTxtImport = pending.copy(replaceExisting = replace)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -821,10 +1072,11 @@ fun ChatEditorSheet(
                             clearAvatarPhoto,
                             wallpaper,
                             unread,
-                            pinned
+                            pinned,
+                            pendingTxtImport
                         )
                     },
-                    enabled = contactName.trim().isNotEmpty(),
+                    enabled = contactName.trim().isNotEmpty() && !isParsingTxt,
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -840,14 +1092,9 @@ fun ChatEditorSheet(
         GalleryAccessConsentDialog(
             purposeText = "MostazaChat te pedirá elegir una única foto de perfil mediante el selector seguro de Android. No accederemos al resto de tu galería.",
             onConfirm = {
+                MediaImportHelper.setGalleryAccessConsentGranted(context)
                 showGalleryConsent = false
-                try {
-                    avatarPhotoLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                } catch (_: Exception) {
-                    onContactImportError("No se pudo abrir el selector de galería")
-                }
+                launchAvatarPicker()
             },
             onDismiss = { showGalleryConsent = false }
         )

@@ -139,4 +139,156 @@ class LocalChatMockRepositoryTest {
         assertEquals(SenderRole.OTHER, messages[0].parsedSenderRole)
         assertEquals(SenderRole.ME, messages[1].parsedSenderRole)
     }
+
+    @Test
+    fun importsTxtMessagesIntoExistingChatPreservingProfileAndSupportingReplaceOrAppend() = runTest {
+        val chatId = repo.createChat(
+            userId = userId,
+            contactName = "Cayetana",
+            groupChat = false,
+            statusText = "Ocupada",
+            online = false,
+            verified = true,
+            avatarEmoji = "CE",
+            avatarColorHex = "#1565C0",
+            avatarImageBase64 = "fakeAvatarBase64==",
+            wallpaperTheme = WallpaperTheme.MIDNIGHT,
+            unreadCount = 0L,
+            pinned = true
+        ).getOrThrow()
+
+        repo.sendMessage(
+            userId = userId,
+            chatId = chatId,
+            senderRole = SenderRole.ME,
+            senderName = "Yo",
+            text = "Mensaje antiguo",
+            messageType = MessageType.TEXT,
+            displayTime = "09:00",
+            dateLabel = "AYER",
+            tickStatus = TickStatus.READ,
+            orderIndex = 1L
+        ).getOrThrow()
+
+        val firstTxt = WhatsAppTxtParser.parseText(
+            """
+            22/11/24, 18:10 - Cayetana: Hola, ¿vienes?
+            22/11/24, 18:11 - Pablo: Sí, voy saliendo
+            """.trimIndent()
+        ).getOrThrow()
+
+        val replacedCount = repo.importWhatsAppMessagesIntoChat(
+            userId = userId,
+            chatId = chatId,
+            parsedMessages = firstTxt.messages,
+            myParticipantName = "Pablo",
+            replaceExisting = true
+        ).getOrThrow()
+
+        assertEquals(2, replacedCount)
+        val afterReplace = repo.observeMessages(userId, chatId).first()
+        assertEquals(2, afterReplace.size)
+        assertEquals("Hola, ¿vienes?", afterReplace[0].text)
+        assertEquals(SenderRole.OTHER, afterReplace[0].parsedSenderRole)
+        assertEquals(SenderRole.ME, afterReplace[1].parsedSenderRole)
+
+        val secondTxt = WhatsAppTxtParser.parseText(
+            "22/11/24, 18:15 - Cayetana: Perfecto, aquí te espero"
+        ).getOrThrow()
+
+        val appendedCount = repo.importWhatsAppMessagesIntoChat(
+            userId = userId,
+            chatId = chatId,
+            parsedMessages = secondTxt.messages,
+            myParticipantName = "Pablo",
+            replaceExisting = false
+        ).getOrThrow()
+
+        assertEquals(1, appendedCount)
+        val afterAppend = repo.observeMessages(userId, chatId).first()
+        assertEquals(3, afterAppend.size)
+        assertEquals("Perfecto, aquí te espero", afterAppend[2].text)
+
+        val preservedChat = repo.observeChat(userId, chatId).first()
+        assertEquals("fakeAvatarBase64==", preservedChat?.avatarImageBase64)
+        assertEquals("Ocupada", preservedChat?.statusText)
+        assertEquals("Perfecto, aquí te espero", preservedChat?.lastMessagePreview)
+    }
+
+    @Test
+    fun updatesOmittedMessageWithImageAndClearsMediaBackToText() = runTest {
+        val chatId = repo.createChat(
+            userId = userId,
+            contactName = "Laura",
+            groupChat = false,
+            statusText = "en línea",
+            online = true,
+            verified = false,
+            avatarEmoji = "L",
+            avatarColorHex = "#00796B",
+            avatarImageBase64 = null,
+            wallpaperTheme = WallpaperTheme.CLASSIC,
+            unreadCount = 0L,
+            pinned = false
+        ).getOrThrow()
+
+        repo.sendMessage(
+            userId = userId,
+            chatId = chatId,
+            senderRole = SenderRole.OTHER,
+            senderName = "Laura",
+            text = "<Multimedia omitido>",
+            messageType = MessageType.TEXT,
+            displayTime = "12:10",
+            dateLabel = "HOY",
+            tickStatus = TickStatus.READ,
+            orderIndex = 1L
+        ).getOrThrow()
+
+        val initialMsg = repo.observeMessages(userId, chatId).first().single()
+        assertEquals(MessageType.TEXT, initialMsg.parsedMessageType)
+
+        repo.updateMessage(
+            userId = userId,
+            chatId = chatId,
+            messageId = initialMsg.id,
+            text = "🎞️ GIF",
+            displayTime = initialMsg.displayTime,
+            dateLabel = initialMsg.dateLabel,
+            senderRole = SenderRole.OTHER,
+            senderName = "Laura",
+            tickStatus = TickStatus.READ,
+            reactionEmoji = null,
+            messageType = MessageType.IMAGE,
+            mediaPreviewBase64 = "previewBase64==",
+            localMediaPath = "/tmp/test.gif",
+            mediaFileName = "funny.gif",
+            mediaDuration = null,
+            clearMedia = false
+        ).getOrThrow()
+
+        val replacedMsg = repo.observeMessages(userId, chatId).first().single()
+        assertEquals(MessageType.IMAGE, replacedMsg.parsedMessageType)
+        assertEquals("funny.gif", replacedMsg.mediaFileName)
+        assertEquals("/tmp/test.gif", replacedMsg.localMediaPath)
+
+        repo.updateMessage(
+            userId = userId,
+            chatId = chatId,
+            messageId = initialMsg.id,
+            text = "<Multimedia omitido>",
+            displayTime = initialMsg.displayTime,
+            dateLabel = initialMsg.dateLabel,
+            senderRole = SenderRole.OTHER,
+            senderName = "Laura",
+            tickStatus = TickStatus.READ,
+            reactionEmoji = null,
+            clearMedia = true
+        ).getOrThrow()
+
+        val clearedMsg = repo.observeMessages(userId, chatId).first().single()
+        assertEquals(MessageType.TEXT, clearedMsg.parsedMessageType)
+        assertEquals(null, clearedMsg.localMediaPath)
+        assertEquals(null, clearedMsg.mediaFileName)
+    }
 }

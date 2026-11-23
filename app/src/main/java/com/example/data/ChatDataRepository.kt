@@ -11,6 +11,7 @@ import com.example.data.model.TickStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperTheme
 import com.example.media.ParsedWhatsAppChat
+import com.example.media.ParsedWhatsAppMessage
 import kotlinx.coroutines.flow.Flow
 
 interface ChatDataRepository {
@@ -90,6 +91,12 @@ interface ChatDataRepository {
         senderName: String,
         tickStatus: TickStatus,
         reactionEmoji: String?,
+        messageType: MessageType? = null,
+        mediaPreviewBase64: String? = null,
+        localMediaPath: String? = null,
+        mediaFileName: String? = null,
+        mediaDuration: String? = null,
+        clearMedia: Boolean = false,
     ): Result<Unit>
 
     suspend fun deleteMessage(userId: String, chatId: String, messageId: String): Result<Unit>
@@ -119,4 +126,12 @@ interface ChatDataRepository {
         myParticipantName: String?,
         isGroup: Boolean
     ): Result<Pair<String, Int>>
+
+    suspend fun importWhatsAppMessagesIntoChat(
+        userId: String,
+        chatId: String,
+        parsedMessages: List<ParsedWhatsAppMessage>,
+        myParticipantName: String?,
+        replaceExisting: Boolean = true
+    ): Result<Int>
 }

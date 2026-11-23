@@ -5,8 +5,9 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PhoneAndroid
@@ -68,8 +70,10 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -430,6 +434,7 @@ fun ChatsListScreen(
                                         chat = chat,
                                         onClick = { onOpenChat(chat.id) },
                                         onAvatarClick = { previewingAvatarChat = chat },
+                                        onEditChat = { editingChatFromPreview = chat },
                                         onTogglePin = { viewModel.togglePinned(chat) },
                                         onDelete = { viewModel.deleteChat(chat.id) }
                                     )
@@ -451,13 +456,16 @@ fun ChatsListScreen(
             initialAvatarEmoji = draft?.initials ?: "😎",
             initialAvatarColorHex = draft?.colorHex ?: AvatarPresets.colors.first(),
             initialAvatarImageBase64 = draft?.avatarImageBase64,
+            isEditingExistingChat = false,
+            myDefaultName = userProfile?.defaultMyName ?: "Yo",
+            userDisplayName = userProfile?.displayName ?: "",
             allowContactImport = true,
             onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
             onDismiss = {
                 showCreateSheet = false
                 importedContactDraft = null
             },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, _, wallpaper, unread, pinned ->
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, _, wallpaper, unread, pinned, pendingTxt ->
                 showCreateSheet = false
                 importedContactDraft = null
                 viewModel.createChat(
@@ -472,6 +480,7 @@ fun ChatsListScreen(
                     wallpaperTheme = wallpaper,
                     unreadCount = unread,
                     pinned = pinned,
+                    pendingTxtImport = pendingTxt,
                     onCreated = onOpenChat
                 )
             }
@@ -534,9 +543,12 @@ fun ChatsListScreen(
             initialWallpaper = editChat.parsedWallpaper,
             initialUnreadCount = editChat.unreadCount,
             initialPinned = editChat.pinned,
+            isEditingExistingChat = true,
+            myDefaultName = userProfile?.defaultMyName ?: "Yo",
+            userDisplayName = userProfile?.displayName ?: "",
             onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
             onDismiss = { editingChatFromPreview = null },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned ->
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, pendingTxt ->
                 editingChatFromPreview = null
                 viewModel.updateChatSettings(
                     chatId = editChat.id,
@@ -551,28 +563,40 @@ fun ChatsListScreen(
                     clearAvatarPhoto = clearPhoto,
                     wallpaperTheme = wallpaper,
                     unreadCount = unread,
-                    pinned = pinned
+                    pinned = pinned,
+                    pendingTxtImport = pendingTxt,
+                    onTxtImported = onOpenChat
                 )
             }
         )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatListCard(
     chat: FakeChat,
     onClick: () -> Unit,
     onAvatarClick: () -> Unit,
+    onEditChat: () -> Unit,
     onTogglePin: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClickLabel = "Opciones de chat",
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    showMenu = true
+                }
+            )
             .testTag("chat_item_${chat.id}"),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
@@ -594,7 +618,14 @@ private fun ChatListCard(
                 imageBase64 = chat.avatarImageBase64,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .clickable(onClick = onAvatarClick)
+                    .combinedClickable(
+                        onClick = onAvatarClick,
+                        onLongClickLabel = "Opciones de chat",
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showMenu = true
+                        }
+                    )
                     .testTag("chat_avatar_${chat.id}")
             )
 
@@ -713,6 +744,16 @@ private fun ChatListCard(
                                     onClick = {
                                         showMenu = false
                                         onTogglePin()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Configurar contacto") },
+                                    leadingIcon = {
+                                        Icon(Icons.Rounded.Edit, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onEditChat()
                                     }
                                 )
                                 DropdownMenuItem(

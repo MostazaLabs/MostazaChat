@@ -13,6 +13,7 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "local_profiles")
@@ -135,6 +136,9 @@ interface LocalChatDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertChat(chat: LocalChatEntity)
 
+    @Update
+    suspend fun updateChat(chat: LocalChatEntity)
+
     @Query("DELETE FROM local_chats WHERE userId = :userId AND id = :chatId")
     suspend fun deleteChat(userId: String, chatId: String)
 
@@ -177,9 +181,27 @@ interface LocalChatDao {
     @Query("DELETE FROM local_messages WHERE userId = :userId AND chatId = :chatId AND id = :messageId")
     suspend fun deleteMessage(userId: String, chatId: String, messageId: String)
 
+    @Query("DELETE FROM local_messages WHERE userId = :userId AND chatId = :chatId")
+    suspend fun deleteMessagesForChat(userId: String, chatId: String)
+
     @Transaction
     suspend fun insertChatWithMessages(chat: LocalChatEntity, messages: List<LocalMessageEntity>) {
         upsertChat(chat)
+        if (messages.isNotEmpty()) {
+            upsertMessages(messages)
+        }
+    }
+
+    @Transaction
+    suspend fun replaceOrAppendChatMessages(
+        chat: LocalChatEntity,
+        messages: List<LocalMessageEntity>,
+        replaceExisting: Boolean
+    ) {
+        if (replaceExisting) {
+            deleteMessagesForChat(chat.userId, chat.id)
+        }
+        updateChat(chat)
         if (messages.isNotEmpty()) {
             upsertMessages(messages)
         }

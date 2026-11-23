@@ -14,6 +14,7 @@ import com.example.data.model.TickStatus
 import com.example.data.model.UiState
 import com.example.data.model.WallpaperTheme
 import com.example.media.MediaImportHelper
+import com.example.media.PendingTxtImport
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -241,7 +242,11 @@ class ChatRoomViewModel(
                 return@launch
             }
             val finalText = caption.trim().ifBlank {
-                if (imported.messageType == MessageType.VIDEO) "🎬 Vídeo" else "📷 Foto"
+                when {
+                    imported.messageType == MessageType.VIDEO -> "🎬 Vídeo"
+                    MediaImportHelper.isGifFile(null, imported.fileName, imported.localPath) -> "🎞️ GIF"
+                    else -> "📷 Foto"
+                }
             }
             val orderIdx = nextOrderIndex()
             val result = repository.sendMessage(
@@ -318,22 +323,69 @@ class ChatRoomViewModel(
         newRole: SenderRole,
         newSenderName: String,
         newTick: TickStatus,
-        newReaction: String?
+        newReaction: String?,
+        context: Context? = null,
+        replacementMediaUri: Uri? = null,
+        clearMedia: Boolean = false
     ) {
         viewModelScope.launch {
-            repository.updateMessage(
-                userId = currentUserId,
-                chatId = chatId,
-                messageId = message.id,
-                text = newText,
-                displayTime = newTime,
-                dateLabel = newDateLabel,
-                senderRole = newRole,
-                senderName = newSenderName,
-                tickStatus = newTick,
-                reactionEmoji = newReaction
-            ).onFailure { err ->
-                _errorBanner.value = err.localizedMessage ?: "Error al actualizar mensaje"
+            if (replacementMediaUri != null && context != null) {
+                _isImportingMedia.value = true
+                val imported = MediaImportHelper.importChatMediaFromGallery(context, replacementMediaUri)
+                if (imported == null) {
+                    _isImportingMedia.value = false
+                    _errorBanner.value = "No se pudo procesar la foto, GIF o vídeo seleccionado"
+                    return@launch
+                }
+                val finalText = newText.trim().ifBlank {
+                    when {
+                        imported.messageType == MessageType.VIDEO -> "🎬 Vídeo"
+                        MediaImportHelper.isGifFile(null, imported.fileName, imported.localPath) -> "🎞️ GIF"
+                        else -> "📷 Foto"
+                    }
+                }
+                repository.updateMessage(
+                    userId = currentUserId,
+                    chatId = chatId,
+                    messageId = message.id,
+                    text = finalText,
+                    displayTime = newTime,
+                    dateLabel = newDateLabel,
+                    senderRole = newRole,
+                    senderName = newSenderName,
+                    tickStatus = newTick,
+                    reactionEmoji = newReaction,
+                    messageType = imported.messageType,
+                    mediaPreviewBase64 = imported.previewBase64,
+                    localMediaPath = imported.localPath,
+                    mediaFileName = imported.fileName,
+                    mediaDuration = imported.durationText,
+                    clearMedia = false
+                ).onFailure { err ->
+                    _errorBanner.value = err.localizedMessage ?: "Error al reemplazar con multimedia"
+                }
+                _isImportingMedia.value = false
+            } else {
+                val finalText = if (clearMedia) {
+                    newText.trim().ifBlank { "Mensaje" }
+                } else {
+                    newText
+                }
+                repository.updateMessage(
+                    userId = currentUserId,
+                    chatId = chatId,
+                    messageId = message.id,
+                    text = finalText,
+                    displayTime = newTime,
+                    dateLabel = newDateLabel,
+                    senderRole = newRole,
+                    senderName = newSenderName,
+                    tickStatus = newTick,
+                    reactionEmoji = newReaction,
+                    clearMedia = clearMedia
+                ).onFailure { err ->
+                    _errorBanner.value = err.localizedMessage ?: "Error al actualizar mensaje"
+                }
             }
         }
     }
@@ -373,10 +425,14 @@ class ChatRoomViewModel(
         clearAvatarPhoto: Boolean = false,
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
-        pinned: Boolean
+        pinned: Boolean,
+        pendingTxtImport: PendingTxtImport? = null
     ) {
         viewModelScope.launch {
-            repository.updateChatMeta(
+            if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {
+                _isImportingMedia.value = true
+            }
+            val metaResult = repository.updateChatMeta(
                 userId = currentUserId,
                 chatId = chatId,
                 contactName = contactName,
@@ -391,9 +447,23 @@ class ChatRoomViewModel(
                 wallpaperTheme = wallpaperTheme,
                 unreadCount = unreadCount,
                 pinned = pinned
-            ).onFailure { err ->
+            )
+            metaResult.onSuccess {
+                if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {
+                    repository.importWhatsAppMessagesIntoChat(
+                        userId = currentUserId,
+                        chatId = chatId,
+                        parsedMessages = pendingTxtImport.messages,
+                        myParticipantName = pendingTxtImport.selectedMe,
+                        replaceExisting = pendingTxtImport.replaceExisting
+                    ).onFailure { err ->
+                        _errorBanner.value = err.localizedMessage ?: "Opciones guardadas, pero no se pudieron importar los archivos .txt"
+                    }
+                }
+            }.onFailure { err ->
                 _errorBanner.value = err.localizedMessage ?: "No se pudo guardar el chat"
             }
+            _isImportingMedia.value = false
         }
     }
 

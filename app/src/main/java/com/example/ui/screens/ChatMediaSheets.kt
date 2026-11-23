@@ -1,8 +1,18 @@
 package com.example.ui.screens
 
+import android.content.Context
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ImageDecoder
+import android.graphics.Movie
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
+import android.os.SystemClock
+import android.view.View
+import android.widget.ImageView
 import android.widget.MediaController
 import android.widget.Toast
 import android.widget.VideoView
@@ -57,6 +67,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -112,11 +124,17 @@ fun MediaComposerDialog(
 ) {
     val context = LocalContext.current
     val isVideo = remember(uri) {
-        context.contentResolver.getType(uri)?.startsWith("video/") == true
+        MediaImportHelper.isVideoUri(context, uri)
     }
     var caption by remember { mutableStateOf("") }
     var selectedRole by remember(initialRole) {
         mutableStateOf(if (initialRole == SenderRole.OTHER) SenderRole.OTHER else SenderRole.ME)
+    }
+
+    val isGif by produceState(initialValue = false, uri, isVideo) {
+        value = if (isVideo) false else withContext(Dispatchers.IO) {
+            MediaImportHelper.isGifUri(context, uri)
+        }
     }
 
     val previewBitmap by produceState<ImageBitmap?>(initialValue = null, uri, isVideo) {
@@ -148,7 +166,15 @@ fun MediaComposerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isVideo) "Enviar vídeo al chat" else "Enviar foto al chat") },
+        title = {
+            Text(
+                when {
+                    isVideo -> "Enviar vídeo al chat"
+                    isGif -> "Enviar GIF al chat"
+                    else -> "Enviar foto al chat"
+                }
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(
@@ -186,6 +212,22 @@ fun MediaComposerDialog(
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(30.dp))
                             }
                         }
+                    } else if (isGif) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Black.copy(alpha = 0.72f),
+                            contentColor = Color.White,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(8.dp)
+                        ) {
+                            Text(
+                                text = "GIF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
                 }
 
@@ -213,7 +255,15 @@ fun MediaComposerDialog(
                     value = caption,
                     onValueChange = { if (it.length <= 500) caption = it },
                     label = { Text("Comentario / pie de foto (opcional)") },
-                    placeholder = { Text(if (isVideo) "Mira este vídeo..." else "Mira esta foto...") },
+                    placeholder = {
+                        Text(
+                            when {
+                                isVideo -> "Mira este vídeo..."
+                                isGif -> "Mira este GIF..."
+                                else -> "Mira esta foto..."
+                            }
+                        )
+                    },
                     maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -248,13 +298,16 @@ fun MediaViewerDialog(
         val path = message.localMediaPath
         !path.isNullOrBlank() && File(path).exists()
     }
+    val isGif = remember(message.mediaFileName, message.localMediaPath, isVideo) {
+        !isVideo && MediaImportHelper.isGifFile(null, message.mediaFileName, message.localMediaPath)
+    }
     val imageBitmap by produceState<ImageBitmap?>(
         initialValue = MediaImportHelper.decodeBase64ToImageBitmap(message.mediaPreviewBase64),
         message.id,
         message.localMediaPath,
         message.mediaPreviewBase64
     ) {
-        if (!isVideo && localFileExists) {
+        if (!isVideo && !isGif && localFileExists) {
             val loaded = MediaImportHelper.loadLocalImageBitmap(message.localMediaPath)
             if (loaded != null) value = loaded
         }
@@ -303,7 +356,7 @@ fun MediaViewerDialog(
                             )
                         }
                     }
-                    if (!isVideo && imageBitmap != null) {
+                    if (!isVideo && (imageBitmap != null || (isGif && localFileExists))) {
                         IconButton(
                             onClick = {
                                 if (zoomScale > 1.05f) {
@@ -356,7 +409,7 @@ fun MediaViewerDialog(
                         .clipToBounds()
                         .onSizeChanged { viewerSize = it }
                         .then(
-                            if (!isVideo && imageBitmap != null) {
+                            if (!isVideo && (imageBitmap != null || (isGif && localFileExists))) {
                                 Modifier
                                     .pointerInput(message.id) {
                                         detectTapGestures(
@@ -421,6 +474,20 @@ fun MediaViewerDialog(
                                 .heightIn(min = 240.dp, max = 520.dp)
                                 .clip(RoundedCornerShape(16.dp))
                         )
+                    } else if (isGif && localFileExists) {
+                        AnimatedGifPlayer(
+                            filePath = message.localMediaPath.orEmpty(),
+                            fallbackBitmap = imageBitmap,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = zoomScale
+                                    scaleY = zoomScale
+                                    translationX = panOffset.x
+                                    translationY = panOffset.y
+                                }
+                                .testTag("media_viewer_gif")
+                        )
                     } else if (imageBitmap != null) {
                         Image(
                             bitmap = imageBitmap!!,
@@ -461,7 +528,7 @@ fun MediaViewerDialog(
                     }
                 }
 
-                if (message.text.isNotBlank() && message.text != "📷 Foto" && message.text != "🎬 Vídeo") {
+                if (message.text.isNotBlank() && message.text != "📷 Foto" && message.text != "🎬 Vídeo" && message.text != "🎞️ GIF") {
                     Surface(
                         color = Color.Black.copy(alpha = 0.55f),
                         modifier = Modifier.fillMaxWidth()
@@ -475,6 +542,128 @@ fun MediaViewerDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AnimatedGifPlayer(
+    filePath: String,
+    fallbackBitmap: ImageBitmap?,
+    modifier: Modifier = Modifier
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        var decodedDrawable by remember(filePath) { mutableStateOf<Drawable?>(null) }
+
+        LaunchedEffect(filePath) {
+            decodedDrawable = withContext(Dispatchers.IO) {
+                try {
+                    val file = File(filePath)
+                    if (!file.exists()) return@withContext null
+                    val source = ImageDecoder.createSource(file)
+                    ImageDecoder.decodeDrawable(source)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+
+        DisposableEffect(decodedDrawable) {
+            val anim = decodedDrawable as? AnimatedImageDrawable
+            if (anim != null) {
+                anim.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                anim.start()
+            }
+            onDispose {
+                anim?.stop()
+            }
+        }
+
+        val currentDrawable = decodedDrawable
+        if (currentDrawable != null) {
+            AndroidView(
+                factory = { ctx ->
+                    ImageView(ctx).apply {
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        adjustViewBounds = false
+                    }
+                },
+                update = { imageView ->
+                    if (imageView.drawable !== currentDrawable) {
+                        imageView.setImageDrawable(currentDrawable)
+                        (currentDrawable as? AnimatedImageDrawable)?.apply {
+                            repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                            start()
+                        }
+                    }
+                },
+                modifier = modifier
+            )
+        } else if (fallbackBitmap != null) {
+            Image(
+                bitmap = fallbackBitmap,
+                contentDescription = "Cargando GIF",
+                contentScale = ContentScale.Fit,
+                modifier = modifier
+            )
+        }
+    } else {
+        AndroidView(
+            factory = { ctx -> LegacyGifMovieView(ctx, filePath) },
+            update = { view -> view.setGifPath(filePath) },
+            modifier = modifier
+        )
+    }
+}
+
+@Suppress("DEPRECATION")
+private class LegacyGifMovieView(
+    context: Context,
+    initialPath: String
+) : View(context) {
+    private var currentPath: String = ""
+    private var movie: Movie? = null
+    private var movieStartMs: Long = 0L
+
+    init {
+        setGifPath(initialPath)
+    }
+
+    fun setGifPath(path: String) {
+        if (currentPath == path && movie != null) return
+        currentPath = path
+        movie = try {
+            val file = File(path)
+            if (file.exists()) Movie.decodeFile(file.absolutePath) else null
+        } catch (_: Exception) {
+            null
+        }
+        movieStartMs = 0L
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val m = movie ?: return
+        val w = m.width().coerceAtLeast(1)
+        val h = m.height().coerceAtLeast(1)
+        val now = SystemClock.uptimeMillis()
+        if (movieStartMs == 0L) movieStartMs = now
+        val duration = m.duration().let { if (it <= 0) 1000 else it }
+        val relTime = ((now - movieStartMs) % duration).toInt()
+        m.setTime(relTime)
+
+        val scale = minOf(width.toFloat() / w.toFloat(), height.toFloat() / h.toFloat())
+        val dx = (width - w * scale) / 2f
+        val dy = (height - h * scale) / 2f
+        canvas.save()
+        canvas.translate(dx, dy)
+        canvas.scale(scale, scale)
+        m.draw(canvas, 0f, 0f)
+        canvas.restore()
+
+        if (isAttachedToWindow) {
+            postInvalidateOnAnimation()
         }
     }
 }
@@ -721,6 +910,7 @@ private fun MediaGridThumbnailTile(
     modifier: Modifier = Modifier
 ) {
     val isVideo = message.parsedMessageType == MessageType.VIDEO
+    val isGif = !isVideo && MediaImportHelper.isGifFile(null, message.mediaFileName, message.localMediaPath)
     val previewBitmap = remember(message.mediaPreviewBase64) {
         MediaImportHelper.decodeBase64ToImageBitmap(message.mediaPreviewBase64)
     }
@@ -776,6 +966,22 @@ private fun MediaGridThumbnailTile(
                     text = message.mediaDuration ?: "0:05",
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+        } else if (isGif) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = Color.Black.copy(alpha = 0.72f),
+                contentColor = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+            ) {
+                Text(
+                    text = "GIF",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                 )
             }
         }
