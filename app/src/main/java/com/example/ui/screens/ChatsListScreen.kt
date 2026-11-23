@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -76,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.AvatarPresets
+import com.example.data.model.CallType
 import com.example.data.model.FakeChat
 import com.example.data.model.SenderRole
 import com.example.data.model.UiState
@@ -83,6 +87,7 @@ import com.example.media.ParsedWhatsAppChat
 import com.example.media.WhatsAppTxtParser
 import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
+import com.example.ui.components.ContactAvatarPreviewDialog
 import com.example.ui.components.ImportedContact
 import com.example.ui.components.TickStatusIcon
 import com.example.ui.components.VerifiedIcon
@@ -98,6 +103,7 @@ fun ChatsListScreen(
     isGuestMode: Boolean = false,
     localModeLabel: String = "Local",
     onOpenChat: (String) -> Unit,
+    onStartFakeCall: (FakeChat, CallType) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -113,17 +119,21 @@ fun ChatsListScreen(
     var importedContactDraft by remember { mutableStateOf<ImportedContact?>(null) }
     var parsedWhatsAppDraft by remember { mutableStateOf<ParsedWhatsAppChat?>(null) }
     var isParsingWhatsAppTxt by remember { mutableStateOf(false) }
+    var previewingAvatarChat by remember { mutableStateOf<FakeChat?>(null) }
+    var editingChatFromPreview by remember { mutableStateOf<FakeChat?>(null) }
 
     val pickContactLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
     ) { uri ->
         if (uri != null) {
-            val imported = readContactFromUri(context, uri)
-            if (imported != null) {
-                importedContactDraft = imported
-                showCreateSheet = true
-            } else {
-                viewModel.emitStatusMessage("No se pudo leer el nombre del contacto")
+            scope.launch {
+                val imported = readContactFromUri(context, uri)
+                if (imported != null) {
+                    importedContactDraft = imported
+                    showCreateSheet = true
+                } else {
+                    viewModel.emitStatusMessage("No se pudo leer el contacto seleccionado")
+                }
             }
         }
     }
@@ -146,11 +156,29 @@ fun ChatsListScreen(
         }
     }
 
-    val launchContactPicker = {
+    val launchPickContactOnly = {
         try {
             pickContactLauncher.launch(null)
         } catch (_: Exception) {
             viewModel.emitStatusMessage("No se encontró la app de Contactos en este dispositivo")
+        }
+    }
+
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        launchPickContactOnly()
+    }
+
+    val launchContactPicker = {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) {
+            launchPickContactOnly()
+        } else {
+            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
         }
     }
 
@@ -401,6 +429,7 @@ fun ChatsListScreen(
                                     ChatListCard(
                                         chat = chat,
                                         onClick = { onOpenChat(chat.id) },
+                                        onAvatarClick = { previewingAvatarChat = chat },
                                         onTogglePin = { viewModel.togglePinned(chat) },
                                         onDelete = { viewModel.deleteChat(chat.id) }
                                     )
@@ -467,12 +496,73 @@ fun ChatsListScreen(
             }
         )
     }
+    previewingAvatarChat?.let { targetChat ->
+        ContactAvatarPreviewDialog(
+            chat = targetChat,
+            onDismiss = { previewingAvatarChat = null },
+            onOpenChat = {
+                previewingAvatarChat = null
+                onOpenChat(targetChat.id)
+            },
+            onStartVoiceCall = {
+                previewingAvatarChat = null
+                onStartFakeCall(targetChat, CallType.VOICE)
+            },
+            onStartVideoCall = {
+                previewingAvatarChat = null
+                onStartFakeCall(targetChat, CallType.VIDEO)
+            },
+            onOpenInfo = {
+                previewingAvatarChat = null
+                editingChatFromPreview = targetChat
+            }
+        )
+    }
+
+    editingChatFromPreview?.let { editChat ->
+        ChatEditorSheet(
+            title = "Configurar contacto",
+            confirmLabel = "Guardar cambios",
+            initialContactName = editChat.contactName,
+            initialGroupChat = editChat.groupChat,
+            initialStatusText = editChat.statusText,
+            initialOnline = editChat.online,
+            initialVerified = editChat.verified,
+            initialAvatarEmoji = editChat.avatarEmoji,
+            initialAvatarColorHex = editChat.avatarColorHex,
+            initialAvatarImageBase64 = editChat.avatarImageBase64,
+            initialWallpaper = editChat.parsedWallpaper,
+            initialUnreadCount = editChat.unreadCount,
+            initialPinned = editChat.pinned,
+            onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
+            onDismiss = { editingChatFromPreview = null },
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned ->
+                editingChatFromPreview = null
+                viewModel.updateChatSettings(
+                    chatId = editChat.id,
+                    contactName = name,
+                    groupChat = isGroup,
+                    statusText = status,
+                    online = online,
+                    verified = verified,
+                    avatarEmoji = emoji,
+                    avatarColorHex = color,
+                    avatarImageBase64 = avatarPhoto,
+                    clearAvatarPhoto = clearPhoto,
+                    wallpaperTheme = wallpaper,
+                    unreadCount = unread,
+                    pinned = pinned
+                )
+            }
+        )
+    }
 }
 
 @Composable
 private fun ChatListCard(
     chat: FakeChat,
     onClick: () -> Unit,
+    onAvatarClick: () -> Unit,
     onTogglePin: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -501,7 +591,11 @@ private fun ChatListCard(
                 colorHex = chat.avatarColorHex,
                 online = chat.online,
                 size = 54.dp,
-                imageBase64 = chat.avatarImageBase64
+                imageBase64 = chat.avatarImageBase64,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(onClick = onAvatarClick)
+                    .testTag("chat_avatar_${chat.id}")
             )
 
             Spacer(Modifier.width(14.dp))

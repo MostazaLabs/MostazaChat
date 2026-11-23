@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +64,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import com.example.data.model.AvatarPresets
 import com.example.data.model.CallDirection
 import com.example.data.model.CallType
@@ -76,6 +81,7 @@ fun CallsTabScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val callsState by viewModel.callsState.collectAsStateWithLifecycle()
     val scheduledSeconds by viewModel.scheduledSecondsLeft.collectAsStateWithLifecycle()
 
@@ -90,16 +96,32 @@ fun CallsTabScreen(
         contract = ActivityResultContracts.PickContact()
     ) { uri ->
         if (uri != null) {
-            val imported = readContactFromUri(context, uri)
-            if (imported != null) {
-                callerName = imported.displayName
-                selectedEmoji = imported.initials
-                selectedColor = imported.colorHex
-                selectedPhotoBase64 = imported.avatarImageBase64
-            } else {
-                viewModel.emitStatusMessage("No se pudo leer el contacto seleccionado")
+            scope.launch {
+                val imported = readContactFromUri(context, uri)
+                if (imported != null) {
+                    callerName = imported.displayName
+                    selectedEmoji = imported.initials
+                    selectedColor = imported.colorHex
+                    selectedPhotoBase64 = imported.avatarImageBase64
+                } else {
+                    viewModel.emitStatusMessage("No se pudo leer el contacto seleccionado")
+                }
             }
         }
+    }
+
+    val launchPickCallerSafely = {
+        try {
+            pickCallerContact.launch(null)
+        } catch (_: Exception) {
+            viewModel.emitStatusMessage("No se encontró la app de Contactos en este dispositivo")
+        }
+    }
+
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        launchPickCallerSafely()
     }
 
     Scaffold(
@@ -182,15 +204,19 @@ fun CallsTabScreen(
 
                             OutlinedButton(
                                 onClick = {
-                                    try {
-                                        pickCallerContact.launch(null)
-                                    } catch (_: Exception) {
-                                        viewModel.emitStatusMessage("No se encontró la app de Contactos en este dispositivo")
+                                    val hasPermission = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.READ_CONTACTS
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (hasPermission) {
+                                        launchPickCallerSafely()
+                                    } else {
+                                        contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
                                     }
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(44.dp)
+                                    .height(48.dp)
                                     .testTag("call_import_contact_button")
                             ) {
                                 Icon(Icons.Rounded.Contacts, contentDescription = null, modifier = Modifier.size(18.dp))

@@ -55,7 +55,7 @@ object MediaImportHelper {
             BitmapFactory.decodeFile(file.absolutePath, bounds)
             val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
             var sample = 1
-            while (maxDim / sample > 1200) {
+            while (maxDim / sample > 2048) {
                 sample *= 2
             }
             val opts = BitmapFactory.Options().apply { inSampleSize = sample }
@@ -68,23 +68,88 @@ object MediaImportHelper {
     fun extractContactPhotoBase64(
         context: Context,
         contactUri: Uri,
-        photoUriStr: String?
+        contactId: Long? = null,
+        photoUriStr: String? = null,
+        photoThumbUriStr: String? = null
     ): String? {
         val resolver = context.contentResolver
+        val resolvedUri = try {
+            ContactsContract.Contacts.lookupContact(resolver, contactUri) ?: contactUri
+        } catch (_: Exception) {
+            contactUri
+        }
+
         val bitmap = tryOpenBitmap {
+            ContactsContract.Contacts.openContactPhotoInputStream(resolver, resolvedUri, true)
+        } ?: tryOpenBitmap {
+            ContactsContract.Contacts.openContactPhotoInputStream(resolver, resolvedUri, false)
+        } ?: tryOpenBitmap {
             ContactsContract.Contacts.openContactPhotoInputStream(resolver, contactUri, true)
         } ?: tryOpenBitmap {
             ContactsContract.Contacts.openContactPhotoInputStream(resolver, contactUri, false)
-        } ?: photoUriStr?.let { raw ->
+        } ?: photoUriStr?.takeIf { it.isNotBlank() }?.let { raw ->
             tryOpenBitmap { resolver.openInputStream(Uri.parse(raw)) }
-        } ?: return null
+        } ?: photoThumbUriStr?.takeIf { it.isNotBlank() }?.let { raw ->
+            tryOpenBitmap { resolver.openInputStream(Uri.parse(raw)) }
+        } ?: queryContactPhotoBlob(resolver, resolvedUri)
+            ?: contactId?.let { queryDataPhotoBlob(resolver, it) }
+            ?: return null
 
-        return encodeSquareThumbnail(bitmap, sizePx = 160, maxChars = 44_000)
+        return encodeSquareThumbnail(bitmap, sizePx = 360, maxChars = 95_000)
+    }
+
+    private fun queryContactPhotoBlob(
+        resolver: android.content.ContentResolver,
+        contactUri: Uri
+    ): Bitmap? {
+        return try {
+            val photoDirUri = Uri.withAppendedPath(contactUri, ContactsContract.Contacts.Photo.CONTENT_DIRECTORY)
+            resolver.query(
+                photoDirUri,
+                arrayOf(ContactsContract.CommonDataKinds.Photo.PHOTO),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val bytes = cursor.getBlob(0)
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } else null
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun queryDataPhotoBlob(
+        resolver: android.content.ContentResolver,
+        contactId: Long
+    ): Bitmap? {
+        return try {
+            resolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Photo.PHOTO),
+                "${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf(contactId.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val bytes = cursor.getBlob(0)
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } else null
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     suspend fun importAvatarFromGallery(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
-        val bitmap = decodeUriBitmap(context, uri, targetMaxDim = 512) ?: return@withContext null
-        encodeSquareThumbnail(bitmap, sizePx = 160, maxChars = 44_000)
+        val bitmap = decodeUriBitmap(context, uri, targetMaxDim = 640) ?: return@withContext null
+        encodeSquareThumbnail(bitmap, sizePx = 360, maxChars = 95_000)
     }
 
     suspend fun importChatMediaFromGallery(context: Context, uri: Uri): ImportedChatMedia? = withContext(Dispatchers.IO) {

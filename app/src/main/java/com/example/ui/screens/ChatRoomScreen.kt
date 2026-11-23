@@ -124,6 +124,7 @@ import com.example.data.model.WallpaperTheme
 import com.example.media.MediaImportHelper
 import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
+import com.example.ui.components.ContactAvatarPreviewDialog
 import com.example.ui.components.GalleryAccessConsentDialog
 import com.example.ui.components.TickStatusIcon
 import com.example.ui.components.VerifiedIcon
@@ -162,6 +163,7 @@ fun ChatRoomScreen(
 
     var inputText by remember { mutableStateOf("") }
     var showChatSettings by remember { mutableStateOf(false) }
+    var showContactAvatarPreview by remember { mutableStateOf(false) }
     var editingMessage by remember { mutableStateOf<FakeMessage?>(null) }
     var viewingMediaMessage by remember { mutableStateOf<FakeMessage?>(null) }
     var pendingMediaUri by remember { mutableStateOf<Uri?>(null) }
@@ -216,19 +218,30 @@ fun ChatRoomScreen(
                     if (chat != null) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { if (!screenshotMode) showChatSettings = true }
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            AvatarBadge(
-                                emoji = chat.avatarEmoji,
-                                colorHex = chat.avatarColorHex,
-                                online = chat.online,
-                                size = 40.dp,
-                                imageBase64 = chat.avatarImageBase64
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .clickable { showContactAvatarPreview = true }
+                                    .testTag("chat_header_avatar_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AvatarBadge(
+                                    emoji = chat.avatarEmoji,
+                                    colorHex = chat.avatarColorHex,
+                                    online = chat.online,
+                                    size = 40.dp,
+                                    imageBase64 = chat.avatarImageBase64
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { if (!screenshotMode) showChatSettings = true }
+                            ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -709,6 +722,26 @@ fun ChatRoomScreen(
                     unreadCount = unread,
                     pinned = pinned
                 )
+            }
+        )
+    }
+
+    if (showContactAvatarPreview && chat != null) {
+        ContactAvatarPreviewDialog(
+            chat = chat,
+            onDismiss = { showContactAvatarPreview = false },
+            onOpenChat = { showContactAvatarPreview = false },
+            onStartVoiceCall = {
+                showContactAvatarPreview = false
+                onStartFakeCall(chat, CallType.VOICE)
+            },
+            onStartVideoCall = {
+                showContactAvatarPreview = false
+                onStartFakeCall(chat, CallType.VIDEO)
+            },
+            onOpenInfo = {
+                showContactAvatarPreview = false
+                if (!screenshotMode) showChatSettings = true
             }
         )
     }

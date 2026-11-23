@@ -1,11 +1,14 @@
 package com.example.ui.components
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -19,17 +22,24 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Message
+import androidx.compose.material.icons.outlined.Call
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -42,6 +52,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -67,17 +78,23 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.AvatarPresets
+import com.example.data.model.FakeChat
 import com.example.data.model.TickStatus
 import com.example.data.model.WallpaperTheme
 import com.example.media.MediaImportHelper
 import com.example.ui.theme.OnlineDotGreen
 import com.example.ui.theme.TickReadColor
 import com.example.ui.theme.VerifiedBadgeBlue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 data class ImportedContact(
@@ -96,24 +113,70 @@ fun deriveContactInitials(name: String): String {
     }
 }
 
-fun readContactFromUri(context: Context, contactUri: Uri): ImportedContact? {
-    return try {
+suspend fun readContactFromUri(context: Context, contactUri: Uri): ImportedContact? = withContext(Dispatchers.IO) {
+    return@withContext try {
+        val resolver = context.contentResolver
+        val resolvedUri = try {
+            ContactsContract.Contacts.lookupContact(resolver, contactUri) ?: contactUri
+        } catch (_: Exception) {
+            contactUri
+        }
         val projection = arrayOf(
+            ContactsContract.Contacts._ID,
             ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
-            ContactsContract.Contacts.PHOTO_URI
+            ContactsContract.Contacts.PHOTO_URI,
+            ContactsContract.Contacts.PHOTO_THUMBNAIL_URI
         )
-        context.contentResolver.query(contactUri, projection, null, null, null)?.use { cursor ->
+        val queryUri = resolvedUri
+        val result = resolver.query(queryUri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
+                val idxId = cursor.getColumnIndex(ContactsContract.Contacts._ID)
                 val idxName = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
                 val idxPhoto = cursor.getColumnIndex(ContactsContract.Contacts.PHOTO_URI)
+                val idxThumb = cursor.getColumnIndex(ContactsContract.Contacts.PHOTO_THUMBNAIL_URI)
+                val contactId = if (idxId >= 0 && !cursor.isNull(idxId)) cursor.getLong(idxId) else null
                 val rawName = if (idxName >= 0) cursor.getString(idxName) else null
                 val rawPhotoUri = if (idxPhoto >= 0) cursor.getString(idxPhoto) else null
-                val cleanName = rawName?.trim()?.takeIf { it.isNotEmpty() }?.take(60) ?: return null
+                val rawThumbUri = if (idxThumb >= 0) cursor.getString(idxThumb) else null
+                val cleanName = rawName?.trim()?.takeIf { it.isNotEmpty() }?.take(60) ?: return@use null
                 val initials = deriveContactInitials(cleanName)
                 val colorHex = AvatarPresets.colors[abs(cleanName.hashCode()) % AvatarPresets.colors.size]
-                val photoBase64 = MediaImportHelper.extractContactPhotoBase64(context, contactUri, rawPhotoUri)
+                val photoBase64 = MediaImportHelper.extractContactPhotoBase64(
+                    context = context,
+                    contactUri = resolvedUri,
+                    contactId = contactId,
+                    photoUriStr = rawPhotoUri,
+                    photoThumbUriStr = rawThumbUri
+                )
                 ImportedContact(cleanName, initials, colorHex, photoBase64)
             } else null
+        }
+        result ?: if (resolvedUri != contactUri) {
+            resolver.query(contactUri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idxId = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                    val idxName = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+                    val idxPhoto = cursor.getColumnIndex(ContactsContract.Contacts.PHOTO_URI)
+                    val idxThumb = cursor.getColumnIndex(ContactsContract.Contacts.PHOTO_THUMBNAIL_URI)
+                    val contactId = if (idxId >= 0 && !cursor.isNull(idxId)) cursor.getLong(idxId) else null
+                    val rawName = if (idxName >= 0) cursor.getString(idxName) else null
+                    val rawPhotoUri = if (idxPhoto >= 0) cursor.getString(idxPhoto) else null
+                    val rawThumbUri = if (idxThumb >= 0) cursor.getString(idxThumb) else null
+                    val cleanName = rawName?.trim()?.takeIf { it.isNotEmpty() }?.take(60) ?: return@use null
+                    val initials = deriveContactInitials(cleanName)
+                    val colorHex = AvatarPresets.colors[abs(cleanName.hashCode()) % AvatarPresets.colors.size]
+                    val photoBase64 = MediaImportHelper.extractContactPhotoBase64(
+                        context = context,
+                        contactUri = contactUri,
+                        contactId = contactId,
+                        photoUriStr = rawPhotoUri,
+                        photoThumbUriStr = rawThumbUri
+                    )
+                    ImportedContact(cleanName, initials, colorHex, photoBase64)
+                } else null
+            }
+        } else {
+            null
         }
     } catch (_: Exception) {
         null
@@ -181,6 +244,144 @@ fun AvatarBadge(
                     .background(OnlineDotGreen)
                     .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
             )
+        }
+    }
+}
+
+@Composable
+fun ContactAvatarPreviewDialog(
+    chat: FakeChat,
+    onDismiss: () -> Unit,
+    onOpenChat: () -> Unit,
+    onStartVoiceCall: () -> Unit,
+    onStartVideoCall: () -> Unit,
+    onOpenInfo: () -> Unit
+) {
+    val photoBitmap = remember(chat.avatarImageBase64) {
+        MediaImportHelper.decodeBase64ToImageBitmap(chat.avatarImageBase64)
+    }
+    val baseColor = remember(chat.avatarColorHex) { parseColorSafe(chat.avatarColorHex) }
+    val display = chat.avatarEmoji.ifBlank { "💬" }
+    val isInitials = remember(display) {
+        display.length <= 3 && display.all { it.isLetterOrDigit() }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 0.dp,
+            shadowElevation = 10.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.78f)
+                .widthIn(max = 310.dp)
+                .testTag("contact_avatar_preview_dialog")
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(baseColor, baseColor.copy(alpha = 0.78f))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (photoBitmap != null) {
+                        Image(
+                            bitmap = photoBitmap,
+                            contentDescription = "Foto de perfil de ${chat.contactName}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Text(
+                            text = display,
+                            color = if (isInitials) Color.White else Color.Unspecified,
+                            fontWeight = if (isInitials) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = if (isInitials) 78.sp else 92.sp
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.42f))
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = chat.contactName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (chat.verified) {
+                            VerifiedIcon(size = 16.dp)
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onOpenChat,
+                        modifier = Modifier.testTag("avatar_preview_chat_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Outlined.Message,
+                            contentDescription = "Abrir chat",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = onStartVoiceCall,
+                        modifier = Modifier.testTag("avatar_preview_call_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Call,
+                            contentDescription = "Llamada simulada",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = onStartVideoCall,
+                        modifier = Modifier.testTag("avatar_preview_video_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Videocam,
+                            contentDescription = "Videollamada simulada",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = onOpenInfo,
+                        modifier = Modifier.testTag("avatar_preview_info_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Info,
+                            contentDescription = "Editar contacto",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -307,19 +508,35 @@ fun ChatEditorSheet(
         contract = ActivityResultContracts.PickContact()
     ) { uri ->
         if (uri != null) {
-            val imported = readContactFromUri(context, uri)
-            if (imported != null) {
-                contactName = imported.displayName
-                avatarEmoji = imported.initials
-                avatarColorHex = imported.colorHex
-                avatarImageBase64 = imported.avatarImageBase64
-                clearAvatarPhoto = imported.avatarImageBase64 == null
-                groupChat = false
-                if (statusText.isBlank()) statusText = "en línea"
-            } else {
-                onContactImportError("No se pudo leer el nombre del contacto seleccionado")
+            scope.launch {
+                val imported = readContactFromUri(context, uri)
+                if (imported != null) {
+                    contactName = imported.displayName
+                    avatarEmoji = imported.initials
+                    avatarColorHex = imported.colorHex
+                    avatarImageBase64 = imported.avatarImageBase64
+                    clearAvatarPhoto = imported.avatarImageBase64 == null
+                    groupChat = false
+                    if (statusText.isBlank()) statusText = "en línea"
+                } else {
+                    onContactImportError("No se pudo leer el contacto seleccionado")
+                }
             }
         }
+    }
+
+    val launchContactPickerSafely = {
+        try {
+            contactPickerLauncher.launch(null)
+        } catch (_: Exception) {
+            onContactImportError("No se encontró la app de Contactos en este dispositivo")
+        }
+    }
+
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        launchContactPickerSafely()
     }
 
     val avatarPhotoLauncher = rememberLauncherForActivityResult(
@@ -379,10 +596,14 @@ fun ChatEditorSheet(
             if (allowContactImport) {
                 OutlinedButton(
                     onClick = {
-                        try {
-                            contactPickerLauncher.launch(null)
-                        } catch (_: Exception) {
-                            onContactImportError("No se encontró la app de Contactos en este dispositivo")
+                        val hasPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.READ_CONTACTS
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasPermission) {
+                            launchContactPickerSafely()
+                        } else {
+                            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
                         }
                     },
                     modifier = Modifier

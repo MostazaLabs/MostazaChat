@@ -9,6 +9,8 @@ import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,8 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.ZoomIn
+import androidx.compose.material.icons.rounded.ZoomOutMap
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,14 +67,20 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -250,6 +260,10 @@ fun MediaViewerDialog(
         }
     }
 
+    var zoomScale by remember(message.id) { mutableStateOf(1f) }
+    var panOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
+    var viewerSize by remember { mutableStateOf(IntSize.Zero) }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -263,7 +277,7 @@ fun MediaViewerDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -286,6 +300,26 @@ fun MediaViewerDialog(
                                 text = "${message.dateLabel} • ${message.displayTime}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                    if (!isVideo && imageBitmap != null) {
+                        IconButton(
+                            onClick = {
+                                if (zoomScale > 1.05f) {
+                                    zoomScale = 1f
+                                    panOffset = Offset.Zero
+                                } else {
+                                    zoomScale = 2.5f
+                                    panOffset = Offset.Zero
+                                }
+                            },
+                            modifier = Modifier.testTag("media_viewer_zoom_button")
+                        ) {
+                            Icon(
+                                imageVector = if (zoomScale > 1.05f) Icons.Rounded.ZoomOutMap else Icons.Rounded.ZoomIn,
+                                contentDescription = if (zoomScale > 1.05f) "Restablecer zoom" else "Ampliar imagen",
+                                tint = Color.White
                             )
                         }
                     }
@@ -319,7 +353,51 @@ fun MediaViewerDialog(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .clipToBounds()
+                        .onSizeChanged { viewerSize = it }
+                        .then(
+                            if (!isVideo && imageBitmap != null) {
+                                Modifier
+                                    .pointerInput(message.id) {
+                                        detectTapGestures(
+                                            onDoubleTap = { tap ->
+                                                if (zoomScale > 1.05f) {
+                                                    zoomScale = 1f
+                                                    panOffset = Offset.Zero
+                                                } else {
+                                                    val targetScale = 2.5f
+                                                    val maxX = (viewerSize.width * (targetScale - 1f)) / 2f
+                                                    val maxY = (viewerSize.height * (targetScale - 1f)) / 2f
+                                                    val cx = viewerSize.width / 2f
+                                                    val cy = viewerSize.height / 2f
+                                                    val dx = ((cx - tap.x) * (targetScale - 1f)).coerceIn(-maxX, maxX)
+                                                    val dy = ((cy - tap.y) * (targetScale - 1f)).coerceIn(-maxY, maxY)
+                                                    zoomScale = targetScale
+                                                    panOffset = Offset(dx, dy)
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(message.id) {
+                                        detectTransformGestures { _, pan, zoom, _ ->
+                                            val newScale = (zoomScale * zoom).coerceIn(1f, 5f)
+                                            if (newScale <= 1.01f) {
+                                                zoomScale = 1f
+                                                panOffset = Offset.Zero
+                                            } else {
+                                                val maxX = (viewerSize.width * (newScale - 1f)) / 2f
+                                                val maxY = (viewerSize.height * (newScale - 1f)) / 2f
+                                                val newX = (panOffset.x + pan.x).coerceIn(-maxX, maxX)
+                                                val newY = (panOffset.y + pan.y).coerceIn(-maxY, maxY)
+                                                zoomScale = newScale
+                                                panOffset = Offset(newX, newY)
+                                            }
+                                        }
+                                    }
+                            } else {
+                                Modifier
+                            }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     if (isVideo && localFileExists) {
@@ -339,29 +417,38 @@ fun MediaViewerDialog(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 240.dp, max = 480.dp)
+                                .padding(horizontal = 8.dp)
+                                .heightIn(min = 240.dp, max = 520.dp)
                                 .clip(RoundedCornerShape(16.dp))
                         )
                     } else if (imageBitmap != null) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Image(
-                                bitmap = imageBitmap!!,
-                                contentDescription = message.text,
-                                contentScale = ContentScale.Fit,
+                        Image(
+                            bitmap = imageBitmap!!,
+                            contentDescription = message.text,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = zoomScale
+                                    scaleY = zoomScale
+                                    translationX = panOffset.x
+                                    translationY = panOffset.y
+                                }
+                                .testTag("media_viewer_image")
+                        )
+                        if (isVideo) {
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.65f),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f, fill = false)
-                                    .clip(RoundedCornerShape(12.dp))
-                            )
-                            if (isVideo) {
+                                    .align(Alignment.BottomCenter)
+                                    .padding(16.dp)
+                            ) {
                                 Text(
                                     text = "Vista previa sincronizada desde otro móvil (${message.mediaDuration ?: "0:05"}). El vídeo original está en el dispositivo emisor.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color.White.copy(alpha = 0.78f),
-                                    modifier = Modifier.padding(horizontal = 12.dp)
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                                 )
                             }
                         }

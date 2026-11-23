@@ -380,6 +380,16 @@ private fun ChatMockWorkspaceRoot(
                                 localModeLabel = localBadgeLabel,
                                 onOpenChat = { chatId ->
                                     navController.navigate("chat/$chatId")
+                                },
+                                onStartFakeCall = { chat, callType ->
+                                    callsViewModel.launchFakeCall(
+                                        contactName = chat.contactName,
+                                        avatarEmoji = chat.avatarEmoji,
+                                        avatarColorHex = chat.avatarColorHex,
+                                        avatarImageBase64 = chat.avatarImageBase64,
+                                        callType = callType,
+                                        delaySeconds = 0
+                                    )
                                 }
                             )
                         }

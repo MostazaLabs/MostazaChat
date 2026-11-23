@@ -170,6 +170,45 @@ class ChatsHomeViewModel(
         }
     }
 
+    fun updateChatSettings(
+        chatId: String,
+        contactName: String,
+        groupChat: Boolean,
+        statusText: String,
+        online: Boolean,
+        verified: Boolean,
+        avatarEmoji: String,
+        avatarColorHex: String,
+        avatarImageBase64: String?,
+        clearAvatarPhoto: Boolean,
+        wallpaperTheme: WallpaperTheme,
+        unreadCount: Long,
+        pinned: Boolean
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            repository.updateChatMeta(
+                userId = currentUserId,
+                chatId = chatId,
+                contactName = contactName,
+                groupChat = groupChat,
+                statusText = statusText,
+                online = online,
+                verified = verified,
+                avatarEmoji = avatarEmoji,
+                avatarColorHex = avatarColorHex,
+                avatarImageBase64 = avatarImageBase64,
+                clearAvatarPhoto = clearAvatarPhoto,
+                wallpaperTheme = wallpaperTheme,
+                unreadCount = unreadCount,
+                pinned = pinned
+            ).onFailure { err ->
+                _statusMessage.value = err.localizedMessage ?: "No se pudo actualizar el contacto"
+            }
+            _isBusy.value = false
+        }
+    }
+
     fun deleteChat(chatId: String) {
         viewModelScope.launch {
             repository.deleteChat(currentUserId, chatId)
