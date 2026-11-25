@@ -88,6 +88,163 @@ data class UserProfile(
 )
 
 @Keep
+data class GroupMember(
+    val chatId: String? = null,
+    val name: String = "",
+    val statusText: String = "en línea",
+    val avatarEmoji: String = "💬",
+    val avatarColorHex: String = "#00796B",
+    val isAdmin: Boolean = false,
+    val isMe: Boolean = false,
+)
+
+object GroupMembersCodec {
+    private const val MAX_JSON_LENGTH = 32000
+
+    fun encode(members: List<GroupMember>): String? {
+        val cleaned = members.mapNotNull { member ->
+            val safeName = member.name.trim().take(60)
+            if (safeName.isEmpty()) return@mapNotNull null
+            member.copy(
+                chatId = member.chatId?.trim()?.takeIf { it.isNotEmpty() }?.take(128),
+                name = safeName,
+                statusText = member.statusText.trim().ifBlank { "en línea" }.take(80),
+                avatarEmoji = member.avatarEmoji.trim().ifBlank { "💬" }.take(16),
+                avatarColorHex = member.avatarColorHex.trim().ifBlank { "#00796B" }.take(12)
+            )
+        }
+        if (cleaned.isEmpty()) return null
+
+        val array = org.json.JSONArray()
+        for (member in cleaned) {
+            val obj = org.json.JSONObject().apply {
+                member.chatId?.let { put("chatId", it) }
+                put("name", member.name)
+                put("statusText", member.statusText)
+                put("avatarEmoji", member.avatarEmoji)
+                put("avatarColorHex", member.avatarColorHex)
+                put("isAdmin", member.isAdmin)
+                put("isMe", member.isMe)
+            }
+            array.put(obj)
+            if (array.toString().length > MAX_JSON_LENGTH) {
+                array.remove(array.length() - 1)
+                break
+            }
+        }
+        return if (array.length() == 0) null else array.toString()
+    }
+
+    fun decode(rawJson: String?): List<GroupMember> {
+        val trimmed = rawJson?.trim() ?: return emptyList()
+        if (trimmed.isEmpty() || !trimmed.startsWith("[")) return emptyList()
+        return try {
+            val array = org.json.JSONArray(trimmed)
+            val result = mutableListOf<GroupMember>()
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val name = obj.optString("name", "").trim().take(60)
+                if (name.isEmpty()) continue
+                result += GroupMember(
+                    chatId = obj.optString("chatId", "").trim().takeIf { it.isNotEmpty() }?.take(128),
+                    name = name,
+                    statusText = obj.optString("statusText", "en línea").trim().ifBlank { "en línea" }.take(80),
+                    avatarEmoji = obj.optString("avatarEmoji", "💬").trim().ifBlank { "💬" }.take(16),
+                    avatarColorHex = obj.optString("avatarColorHex", "#00796B").trim().ifBlank { "#00796B" }.take(12),
+                    isAdmin = obj.optBoolean("isAdmin", false),
+                    isMe = obj.optBoolean("isMe", false)
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun buildStatusSummary(members: List<GroupMember>, maxLength: Int = 80): String {
+        val names = members.map { it.name.trim() }.filter { it.isNotEmpty() }
+        if (names.isEmpty()) return "Grupo"
+        val joined = names.joinToString(", ")
+        return if (joined.length <= maxLength) {
+            joined
+        } else {
+            "${names.take(3).joinToString(", ")} y ${maxOf(1, names.size - 3)} más".take(maxLength)
+        }
+    }
+
+    fun fromStatusTextFallback(statusText: String, myDefaultName: String = "Tú"): List<GroupMember> {
+        val parts = statusText.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("y ", ignoreCase = true) }
+        if (parts.size < 2 && !parts.any { it.equals("Tú", ignoreCase = true) || it.equals(myDefaultName, ignoreCase = true) }) {
+            return emptyList()
+        }
+        return parts.mapIndexed { idx, name ->
+            val isMe = name.equals("Tú", ignoreCase = true) ||
+                name.equals("Yo", ignoreCase = true) ||
+                name.equals(myDefaultName, ignoreCase = true)
+            val color = AvatarPresets.colors[kotlin.math.abs(name.hashCode()) % AvatarPresets.colors.size]
+            val initials = name.split(Regex("\\s+")).filter { it.isNotEmpty() }.let { words ->
+                when {
+                    words.isEmpty() -> "💬"
+                    words.size == 1 -> words[0].take(2).uppercase()
+                    else -> "${words.first().first().uppercaseChar()}${words.last().first().uppercaseChar()}"
+                }
+            }
+            GroupMember(
+                chatId = null,
+                name = name.take(60),
+                statusText = "en línea",
+                avatarEmoji = initials,
+                avatarColorHex = color,
+                isAdmin = isMe || idx == 0,
+                isMe = isMe
+            )
+        }
+    }
+
+    fun fromWhatsAppParticipants(participants: List<String>, myParticipantName: String?): List<GroupMember> {
+        val result = mutableListOf<GroupMember>()
+        val seen = mutableSetOf<String>()
+        if (!myParticipantName.isNullOrBlank()) {
+            seen += myParticipantName.trim().lowercase()
+            result += GroupMember(
+                chatId = null,
+                name = "Tú",
+                statusText = "en línea",
+                avatarEmoji = "TÚ",
+                avatarColorHex = "#00796B",
+                isAdmin = true,
+                isMe = true
+            )
+        }
+        participants.forEach { raw ->
+            val clean = raw.trim().take(60)
+            if (clean.isEmpty()) return@forEach
+            if (!seen.add(clean.lowercase())) return@forEach
+            val isMe = clean.equals("Tú", ignoreCase = true) || clean.equals("Yo", ignoreCase = true)
+            val color = AvatarPresets.colors[kotlin.math.abs(clean.hashCode()) % AvatarPresets.colors.size]
+            val words = clean.split(Regex("\\s+")).filter { it.isNotEmpty() }
+            val initials = when {
+                words.isEmpty() -> "💬"
+                words.size == 1 -> words[0].take(2).uppercase()
+                else -> "${words.first().first().uppercaseChar()}${words.last().first().uppercaseChar()}"
+            }.take(16)
+            result += GroupMember(
+                chatId = null,
+                name = clean,
+                statusText = "en línea",
+                avatarEmoji = initials,
+                avatarColorHex = color,
+                isAdmin = isMe,
+                isMe = isMe
+            )
+        }
+        return result
+    }
+}
+
+@Keep
 @IgnoreExtraProperties
 data class FakeChat(
     @DocumentId val id: String = "",
@@ -103,6 +260,7 @@ data class FakeChat(
     val wallpaperTheme: String = WallpaperTheme.CLASSIC.name,
     val unreadCount: Long = 0L,
     val pinned: Boolean = false,
+    val groupMembersJson: String? = null,
     val lastMessagePreview: String = "",
     val lastMessageTime: String = "",
     val lastMessageSender: String = SenderRole.ME.name,
@@ -113,6 +271,13 @@ data class FakeChat(
     val parsedWallpaper: WallpaperTheme get() = WallpaperTheme.fromRaw(wallpaperTheme)
     val parsedLastSender: SenderRole get() = SenderRole.fromRaw(lastMessageSender)
     val parsedLastTick: TickStatus get() = TickStatus.fromRaw(lastMessageTick)
+    val parsedGroupMembers: List<GroupMember> get() = GroupMembersCodec.decode(groupMembersJson)
+
+    fun resolvedGroupMembers(myFallbackName: String = "Tú"): List<GroupMember> {
+        val explicit = parsedGroupMembers
+        if (explicit.isNotEmpty()) return explicit
+        return if (groupChat) GroupMembersCodec.fromStatusTextFallback(statusText, myFallbackName) else emptyList()
+    }
 }
 
 @Keep

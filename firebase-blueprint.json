@@ -88,6 +88,10 @@
           "type": "boolean",
           "description": "Whether the chat is pinned to the top"
         },
+        "groupMembersJson": {
+          "type": "string",
+          "description": "Optional serialized JSON array of GroupMember objects for group chats"
+        },
         "lastMessagePreview": {
           "type": "string",
           "description": "Preview of the latest message"

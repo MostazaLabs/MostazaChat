@@ -35,6 +35,7 @@ interface ChatDataRepository {
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long = 0L,
         pinned: Boolean = false,
+        groupMembersJson: String? = null,
     ): Result<String>
 
     suspend fun createSampleConversation(userId: String): Result<String>
@@ -54,6 +55,8 @@ interface ChatDataRepository {
         wallpaperTheme: WallpaperTheme? = null,
         unreadCount: Long? = null,
         pinned: Boolean? = null,
+        groupMembersJson: String? = null,
+        clearGroupMembers: Boolean = false,
     ): Result<Unit>
 
     suspend fun deleteChat(userId: String, chatId: String): Result<Unit>

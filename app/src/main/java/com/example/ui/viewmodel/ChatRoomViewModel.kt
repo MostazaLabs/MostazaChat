@@ -426,6 +426,8 @@ class ChatRoomViewModel(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        groupMembersJson: String? = null,
+        clearGroupMembers: Boolean = false,
         pendingTxtImport: PendingTxtImport? = null
     ) {
         viewModelScope.launch {
@@ -446,7 +448,9 @@ class ChatRoomViewModel(
                 clearAvatarPhoto = clearAvatarPhoto,
                 wallpaperTheme = wallpaperTheme,
                 unreadCount = unreadCount,
-                pinned = pinned
+                pinned = pinned,
+                groupMembersJson = groupMembersJson,
+                clearGroupMembers = clearGroupMembers
             )
             metaResult.onSuccess {
                 if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {

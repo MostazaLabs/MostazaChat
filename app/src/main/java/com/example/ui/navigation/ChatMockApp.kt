@@ -30,13 +30,18 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.example.ui.components.InWindowSheetHost
+import com.example.ui.components.InWindowSheetHostContainer
+import com.example.ui.components.LocalInWindowSheetHost
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +69,7 @@ import com.example.auth.firebaseAuthOrNull
 import com.example.data.ChatDataRepository
 import com.example.data.firestore.ChatMockRepository
 import com.example.data.local.LocalChatMockRepository
+import com.example.data.model.UiState
 import com.example.ui.screens.CallsTabScreen
 import com.example.ui.screens.ChatRoomScreen
 import com.example.ui.screens.ChatsListScreen
@@ -128,8 +134,11 @@ fun ChatMockApp(
     }
 
     val isExternalActive = externalSession?.active == true
+    val sheetHost = remember { InWindowSheetHost() }
 
-    when {
+    CompositionLocalProvider(LocalInWindowSheetHost provides sheetHost) {
+        InWindowSheetHostContainer(host = sheetHost) {
+            when {
         user != null -> {
             key("cloud_${user.uid}") {
                 ChatMockWorkspaceRoot(
@@ -204,6 +213,8 @@ fun ChatMockApp(
             )
         }
     }
+        }
+    }
 }
 
 private fun createRepository(app: Application, isGuestMode: Boolean): ChatDataRepository {
@@ -270,12 +281,15 @@ private fun ChatMockWorkspaceRoot(
     val showBottomOrRail = currentDestination?.route in topTabs.map { it.route }
 
     val userProfile by homeViewModel.userProfile.collectAsStateWithLifecycle()
+    val chatsState by homeViewModel.chatsState.collectAsStateWithLifecycle()
+    val availableChats = (chatsState as? UiState.Success)?.data.orEmpty()
     val statusMessage by homeViewModel.statusMessage.collectAsStateWithLifecycle()
     val callStatusMessage by callsViewModel.statusMessage.collectAsStateWithLifecycle()
     val activeCall by callsViewModel.activeCall.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var scrollChatsToTopSignal by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(pendingAutoImportConfig) {
         val pending = pendingAutoImportConfig
@@ -331,12 +345,16 @@ private fun ChatMockWorkspaceRoot(
                                 NavigationBarItem(
                                     selected = selected,
                                     onClick = {
-                                        navController.navigate(tab.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                saveState = true
+                                        if (tab.route == ROUTE_CHATS && selected) {
+                                            scrollChatsToTopSignal++
+                                        } else {
+                                            navController.navigate(tab.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = true
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = true
                                             }
-                                            launchSingleTop = true
-                                            restoreState = true
                                         }
                                     },
                                     icon = {
@@ -365,12 +383,16 @@ private fun ChatMockWorkspaceRoot(
                                 NavigationRailItem(
                                     selected = selected,
                                     onClick = {
-                                        navController.navigate(tab.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                saveState = true
+                                        if (tab.route == ROUTE_CHATS && selected) {
+                                            scrollChatsToTopSignal++
+                                        } else {
+                                            navController.navigate(tab.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = true
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = true
                                             }
-                                            launchSingleTop = true
-                                            restoreState = true
                                         }
                                     },
                                     icon = {
@@ -400,6 +422,7 @@ private fun ChatMockWorkspaceRoot(
                                 viewModel = homeViewModel,
                                 isGuestMode = isGuestMode,
                                 localModeLabel = localBadgeLabel,
+                                scrollToTopSignal = scrollChatsToTopSignal,
                                 sharedIntent = sharedIntent,
                                 onConsumeSharedIntent = onConsumeSharedIntent,
                                 onOpenChat = { chatId ->
@@ -458,6 +481,7 @@ private fun ChatMockWorkspaceRoot(
                             ChatRoomScreen(
                                 viewModel = roomViewModel,
                                 myDefaultName = userProfile?.defaultMyName ?: "Yo",
+                                availableChats = availableChats,
                                 onBack = { navController.popBackStack() },
                                 onStartFakeCall = { chat, callType ->
                                     callsViewModel.launchFakeCall(

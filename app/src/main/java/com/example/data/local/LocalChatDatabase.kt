@@ -14,6 +14,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "local_profiles")
@@ -44,6 +46,7 @@ data class LocalChatEntity(
     val wallpaperTheme: String,
     val unreadCount: Long,
     val pinned: Boolean,
+    val groupMembersJson: String? = null,
     val lastMessagePreview: String,
     val lastMessageTime: String,
     val lastMessageSender: String,
@@ -245,7 +248,7 @@ interface LocalChatDao {
         LocalMessageEntity::class,
         LocalCallEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class LocalChatDatabase : RoomDatabase() {
@@ -255,13 +258,22 @@ abstract class LocalChatDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: LocalChatDatabase? = null
 
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE local_chats ADD COLUMN groupMembersJson TEXT")
+            }
+        }
+
         fun getInstance(context: Context): LocalChatDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     LocalChatDatabase::class.java,
                     "mostazachat_local.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }

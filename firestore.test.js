@@ -221,6 +221,32 @@ test("FakeChat: owner CRUD, list query, partial update, and security boundaries"
       })
   );
 
+  // Partial update with groupMembersJson
+  await assertSucceeds(
+    chatRef.update({
+      groupChat: true,
+      groupMembersJson: JSON.stringify([
+        { name: "Tú", statusText: "en línea", isAdmin: true, isMe: true },
+        { chatId: "chat_sarah", name: "Sarah Aalvik", statusText: "en línea", isAdmin: false, isMe: false }
+      ]),
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // Reject oversized groupMembersJson (> 32000 chars)
+  await assertFails(
+    aliceDb
+      .collection("users")
+      .doc(ALICE_UID)
+      .collection("chats")
+      .doc("chat_oversized_members")
+      .set({
+        ...validChatPayload(ALICE_UID),
+        groupChat: true,
+        groupMembersJson: "A".repeat(32005),
+      })
+  );
+
   // Reject cross-user read, list, update, delete
   await assertFails(
     bobDb.collection("users").doc(ALICE_UID).collection("chats").get()

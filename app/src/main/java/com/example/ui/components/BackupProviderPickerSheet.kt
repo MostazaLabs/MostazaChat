@@ -42,13 +42,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,7 +78,6 @@ fun BackupProviderPickerSheet(
     onConfirmConfig: (config: ExternalSessionConfig, importImmediately: Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var selectedCategory by remember(initialConfig) {
         mutableStateOf(initialConfig?.provider?.category ?: ProviderCategory.CLOUD)
@@ -113,9 +110,8 @@ fun BackupProviderPickerSheet(
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
+    InWindowModalSheet(
+        onDismiss = onDismiss
     ) {
         Column(
             modifier = Modifier

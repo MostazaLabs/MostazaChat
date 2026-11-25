@@ -119,6 +119,7 @@ class ChatsHomeViewModel(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        groupMembersJson: String? = null,
         pendingTxtImport: PendingTxtImport? = null,
         onCreated: (String) -> Unit
     ) {
@@ -136,7 +137,8 @@ class ChatsHomeViewModel(
                 avatarImageBase64 = avatarImageBase64,
                 wallpaperTheme = wallpaperTheme,
                 unreadCount = unreadCount,
-                pinned = pinned
+                pinned = pinned,
+                groupMembersJson = groupMembersJson
             )
             result.onSuccess { chatId ->
                 if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {
@@ -200,6 +202,8 @@ class ChatsHomeViewModel(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        groupMembersJson: String? = null,
+        clearGroupMembers: Boolean = false,
         pendingTxtImport: PendingTxtImport? = null,
         onTxtImported: (String) -> Unit = {}
     ) {
@@ -219,7 +223,9 @@ class ChatsHomeViewModel(
                 clearAvatarPhoto = clearAvatarPhoto,
                 wallpaperTheme = wallpaperTheme,
                 unreadCount = unreadCount,
-                pinned = pinned
+                pinned = pinned,
+                groupMembersJson = groupMembersJson,
+                clearGroupMembers = clearGroupMembers
             )
             metaResult.onSuccess {
                 if (pendingTxtImport != null && pendingTxtImport.messages.isNotEmpty()) {

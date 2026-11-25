@@ -9,6 +9,7 @@ import com.example.data.model.CallType
 import com.example.data.model.FakeCallRecord
 import com.example.data.model.FakeChat
 import com.example.data.model.FakeMessage
+import com.example.data.model.GroupMembersCodec
 import com.example.data.model.MessageType
 import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
@@ -190,6 +191,7 @@ class ChatMockRepository(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        groupMembersJson: String?,
     ): Result<String> {
         var docPath = "users/$userId/chats"
         return try {
@@ -203,6 +205,11 @@ class ChatMockRepository(
             val safeEmoji = avatarEmoji.trim().ifBlank { "💬" }.take(16)
             val safeColor = avatarColorHex.trim().ifBlank { "#00796B" }.take(12)
             val safePhoto = avatarImageBase64?.trim()?.takeIf { it.isNotEmpty() && it.length <= 48000 }
+            val safeMembers = if (groupChat) {
+                groupMembersJson?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32000 }
+            } else {
+                null
+            }
             val nowTime = currentTimeString()
 
             val payload = mutableMapOf<String, Any?>(
@@ -218,6 +225,7 @@ class ChatMockRepository(
                 "wallpaperTheme" to wallpaperTheme.name,
                 "unreadCount" to unreadCount.coerceIn(0L, 9999L),
                 "pinned" to pinned,
+                "groupMembersJson" to safeMembers,
                 "lastMessagePreview" to "Conversación lista para editar",
                 "lastMessageTime" to nowTime,
                 "lastMessageSender" to SenderRole.SYSTEM.name,
@@ -357,6 +365,8 @@ class ChatMockRepository(
         wallpaperTheme: WallpaperTheme?,
         unreadCount: Long?,
         pinned: Boolean?,
+        groupMembersJson: String?,
+        clearGroupMembers: Boolean,
     ): Result<Unit> {
         val docPath = "users/$userId/chats/$chatId"
         return try {
@@ -383,6 +393,13 @@ class ChatMockRepository(
             wallpaperTheme?.let { updates["wallpaperTheme"] = it.name }
             unreadCount?.let { updates["unreadCount"] = it.coerceIn(0L, 9999L) }
             pinned?.let { updates["pinned"] = it }
+            if (clearGroupMembers || groupChat == false) {
+                updates["groupMembersJson"] = FieldValue.delete()
+            } else {
+                groupMembersJson?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32000 }?.let {
+                    updates["groupMembersJson"] = it
+                }
+            }
 
             db.collection("users").document(uid).collection("chats").document(chatId)
                 .update(updates)
@@ -745,6 +762,7 @@ class ChatMockRepository(
                         put("wallpaperTheme", chat.wallpaperTheme)
                         put("unreadCount", chat.unreadCount)
                         put("pinned", chat.pinned)
+                        chat.groupMembersJson?.let { put("groupMembersJson", it) }
                         put("lastMessagePreview", chat.lastMessagePreview)
                         put("lastMessageTime", chat.lastMessageTime)
                         put("lastMessageSender", chat.lastMessageSender)
@@ -801,6 +819,7 @@ class ChatMockRepository(
                     "wallpaperTheme" to WallpaperTheme.fromRaw(chatObj.optString("wallpaperTheme")).name,
                     "unreadCount" to chatObj.optLong("unreadCount", 0L).coerceIn(0L, 9999L),
                     "pinned" to chatObj.optBoolean("pinned", false),
+                    "groupMembersJson" to chatObj.optString("groupMembersJson", "").takeIf { it.isNotBlank() && it.length <= 32000 },
                     "lastMessagePreview" to chatObj.optString("lastMessagePreview", "Chat importado").take(300),
                     "lastMessageTime" to chatObj.optString("lastMessageTime", currentTimeString()).take(24),
                     "lastMessageSender" to SenderRole.fromRaw(chatObj.optString("lastMessageSender")).name,
@@ -886,7 +905,15 @@ class ChatMockRepository(
             val lastPreview = (lastParsed?.text ?: "Chat importado de WhatsApp").replace('\n', ' ').trim().take(300)
             val lastTime = (lastParsed?.timeLabel ?: currentTimeString()).trim().ifBlank { currentTimeString() }.take(24)
 
-            val chatPayload = mapOf(
+            val groupMembersEncoded = if (isGroup) {
+                GroupMembersCodec.encode(
+                    GroupMembersCodec.fromWhatsAppParticipants(parsed.participants, myParticipantName)
+                )
+            } else {
+                null
+            }
+
+            val chatPayload = mutableMapOf<String, Any?>(
                 "userId" to uid,
                 "contactName" to safeTitle,
                 "groupChat" to isGroup,
@@ -902,13 +929,14 @@ class ChatMockRepository(
                 "wallpaperTheme" to WallpaperTheme.CLASSIC.name,
                 "unreadCount" to 0L,
                 "pinned" to false,
+                "groupMembersJson" to groupMembersEncoded,
                 "lastMessagePreview" to lastPreview,
                 "lastMessageTime" to lastTime,
                 "lastMessageSender" to lastSenderRole.name,
                 "lastMessageTick" to TickStatus.READ.name,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp(),
-            )
+            ).filterValues { it != null } as Map<String, Any>
 
             val messageEntries = parsed.messages.mapIndexed { idx, item ->
                 val role = when {

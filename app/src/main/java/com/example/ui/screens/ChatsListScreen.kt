@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Group
+import androidx.compose.material.icons.rounded.GroupAdd
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PushPin
@@ -90,13 +92,16 @@ import com.example.R
 import com.example.data.model.AvatarPresets
 import com.example.data.model.CallType
 import com.example.data.model.FakeChat
+import com.example.data.model.GroupMembersCodec
 import com.example.data.model.SenderRole
 import com.example.data.model.UiState
+import com.example.data.model.WallpaperTheme
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.WhatsAppTxtParser
 import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
 import com.example.ui.components.ContactAvatarPreviewDialog
+import com.example.ui.components.GroupCreatorSheet
 import com.example.ui.components.ImportedContact
 import com.example.ui.components.MessagingCloneSheet
 import com.example.ui.components.TickStatusIcon
@@ -112,6 +117,7 @@ fun ChatsListScreen(
     viewModel: ChatsHomeViewModel,
     isGuestMode: Boolean = false,
     localModeLabel: String = "Local",
+    scrollToTopSignal: Int = 0,
     sharedIntent: Intent? = null,
     onConsumeSharedIntent: () -> Unit = {},
     onOpenChat: (String) -> Unit,
@@ -128,12 +134,21 @@ fun ChatsListScreen(
     val scope = rememberCoroutineScope()
     var showSearchBar by remember { mutableStateOf(false) }
     var showCreateSheet by remember { mutableStateOf(false) }
+    var showGroupCreatorSheet by remember { mutableStateOf(false) }
     var showMessagingCloneSheet by remember { mutableStateOf(false) }
     var importedContactDraft by remember { mutableStateOf<ImportedContact?>(null) }
     var parsedWhatsAppDraft by remember { mutableStateOf<ParsedWhatsAppChat?>(null) }
     var isParsingWhatsAppTxt by remember { mutableStateOf(false) }
     var previewingAvatarChat by remember { mutableStateOf<FakeChat?>(null) }
     var editingChatFromPreview by remember { mutableStateOf<FakeChat?>(null) }
+    val allChats = (chatsState as? UiState.Success)?.data.orEmpty()
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(scrollToTopSignal) {
+        if (scrollToTopSignal > 0) {
+            listState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(sharedIntent) {
         val intent = sharedIntent ?: return@LaunchedEffect
@@ -268,6 +283,15 @@ fun ChatsListScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showGroupCreatorSheet = true },
+                        modifier = Modifier.testTag("new_group_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.GroupAdd,
+                            contentDescription = "Nuevo grupo desde chats"
+                        )
+                    }
                     IconButton(
                         onClick = { showMessagingCloneSheet = true },
                         modifier = Modifier.testTag("import_whatsapp_txt_button")
@@ -448,6 +472,7 @@ fun ChatsListScreen(
                             }
                         } else {
                             LazyColumn(
+                                state = listState,
                                 modifier = Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(
                                     start = 16.dp,
@@ -484,6 +509,7 @@ fun ChatsListScreen(
             initialAvatarEmoji = draft?.initials ?: "😎",
             initialAvatarColorHex = draft?.colorHex ?: AvatarPresets.colors.first(),
             initialAvatarImageBase64 = draft?.avatarImageBase64,
+            availableChats = allChats,
             isEditingExistingChat = false,
             myDefaultName = userProfile?.defaultMyName ?: "Yo",
             userDisplayName = userProfile?.displayName ?: "",
@@ -493,7 +519,7 @@ fun ChatsListScreen(
                 showCreateSheet = false
                 importedContactDraft = null
             },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, _, wallpaper, unread, pinned, pendingTxt ->
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, _, wallpaper, unread, pinned, members, pendingTxt ->
                 showCreateSheet = false
                 importedContactDraft = null
                 viewModel.createChat(
@@ -508,7 +534,35 @@ fun ChatsListScreen(
                     wallpaperTheme = wallpaper,
                     unreadCount = unread,
                     pinned = pinned,
+                    groupMembersJson = if (isGroup) GroupMembersCodec.encode(members) else null,
                     pendingTxtImport = pendingTxt,
+                    onCreated = onOpenChat
+                )
+            }
+        )
+    }
+
+    if (showGroupCreatorSheet) {
+        GroupCreatorSheet(
+            availableChats = allChats,
+            onError = { msg -> viewModel.emitStatusMessage(msg) },
+            onDismiss = { showGroupCreatorSheet = false },
+            onCreateGroup = { groupName, statusSummary, emoji, colorHex, avatarPhoto, wallpaper, members ->
+                showGroupCreatorSheet = false
+                viewModel.createChat(
+                    contactName = groupName,
+                    groupChat = true,
+                    statusText = statusSummary,
+                    online = false,
+                    verified = false,
+                    avatarEmoji = emoji,
+                    avatarColorHex = colorHex,
+                    avatarImageBase64 = avatarPhoto,
+                    wallpaperTheme = wallpaper,
+                    unreadCount = 0L,
+                    pinned = false,
+                    groupMembersJson = GroupMembersCodec.encode(members),
+                    pendingTxtImport = null,
                     onCreated = onOpenChat
                 )
             }
@@ -557,8 +611,9 @@ fun ChatsListScreen(
     }
 
     editingChatFromPreview?.let { editChat ->
+        val myLabel = userProfile?.defaultMyName ?: "Tú"
         ChatEditorSheet(
-            title = "Configurar contacto",
+            title = if (editChat.groupChat) "Configuración del grupo" else "Configurar contacto",
             confirmLabel = "Guardar cambios",
             initialContactName = editChat.contactName,
             initialGroupChat = editChat.groupChat,
@@ -571,13 +626,16 @@ fun ChatsListScreen(
             initialWallpaper = editChat.parsedWallpaper,
             initialUnreadCount = editChat.unreadCount,
             initialPinned = editChat.pinned,
+            initialGroupMembers = editChat.resolvedGroupMembers(myLabel),
+            availableChats = allChats,
             isEditingExistingChat = true,
             myDefaultName = userProfile?.defaultMyName ?: "Yo",
             userDisplayName = userProfile?.displayName ?: "",
             onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
             onDismiss = { editingChatFromPreview = null },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, pendingTxt ->
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
                 editingChatFromPreview = null
+                val encodedMembers = if (isGroup) GroupMembersCodec.encode(members) else null
                 viewModel.updateChatSettings(
                     chatId = editChat.id,
                     contactName = name,
@@ -592,6 +650,8 @@ fun ChatsListScreen(
                     wallpaperTheme = wallpaper,
                     unreadCount = unread,
                     pinned = pinned,
+                    groupMembersJson = encodedMembers,
+                    clearGroupMembers = !isGroup || encodedMembers == null,
                     pendingTxtImport = pendingTxt,
                     onTxtImported = onOpenChat
                 )
@@ -787,7 +847,7 @@ private fun ChatListCard(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Configurar contacto") },
+                                    text = { Text(if (chat.groupChat) "Ver miembros y grupo" else "Configurar contacto") },
                                     leadingIcon = {
                                         Icon(Icons.Rounded.Edit, contentDescription = null)
                                     },

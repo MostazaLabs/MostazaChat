@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.app.Activity
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -78,7 +79,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -88,7 +88,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -108,6 +107,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -120,6 +121,7 @@ import com.example.data.model.AvatarPresets
 import com.example.data.model.CallType
 import com.example.data.model.FakeChat
 import com.example.data.model.FakeMessage
+import com.example.data.model.GroupMembersCodec
 import com.example.data.model.MessageType
 import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
@@ -130,8 +132,11 @@ import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
 import com.example.ui.components.ContactAvatarPreviewDialog
 import com.example.ui.components.GalleryAccessConsentDialog
+import com.example.ui.components.InWindowModalSheet
+import com.example.ui.components.LocalInWindowSheetHost
 import com.example.ui.components.TickStatusIcon
 import com.example.ui.components.VerifiedIcon
+import com.example.ui.components.rememberIsImeVisible
 import com.example.ui.theme.BubbleMeDark
 import com.example.ui.theme.BubbleMeLight
 import com.example.ui.theme.BubbleOtherDark
@@ -151,6 +156,7 @@ import java.util.Locale
 fun ChatRoomScreen(
     viewModel: ChatRoomViewModel,
     myDefaultName: String,
+    availableChats: List<FakeChat> = emptyList(),
     onBack: () -> Unit,
     onStartFakeCall: (FakeChat, CallType) -> Unit,
     modifier: Modifier = Modifier
@@ -253,6 +259,16 @@ fun ChatRoomScreen(
     val wallpaperTheme = chat?.parsedWallpaper ?: WallpaperTheme.CLASSIC
     val isDarkWallpaper = wallpaperTheme == WallpaperTheme.MIDNIGHT || isSystemInDarkTheme()
     val bgColors = wallpaperColors(wallpaperTheme, isDarkWallpaper)
+    val sheetHost = LocalInWindowSheetHost.current
+    val hasActiveSheet = sheetHost?.entries?.isNotEmpty() == true
+    val isRoomImeVisible = rememberIsImeVisible()
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    BackHandler(enabled = isRoomImeVisible && !hasActiveSheet) {
+        keyboardController?.hide()
+        focusManager.clearFocus()
+    }
 
     Scaffold(
         modifier = modifier
@@ -384,7 +400,12 @@ fun ChatRoomScreen(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Configurar chat y perfil") },
+                                        text = {
+                                            Text(
+                                                if (chat.groupChat) "Info. y miembros del grupo"
+                                                else "Configurar chat y perfil"
+                                            )
+                                        },
                                         leadingIcon = {
                                             Icon(Icons.Rounded.Settings, contentDescription = null)
                                         },
@@ -687,6 +708,25 @@ fun ChatRoomScreen(
                             }
 
                             if (chat?.groupChat == true && composerRole == SenderRole.OTHER) {
+                                val quickMembers = remember(chat.groupMembersJson, chat.statusText, myDefaultName) {
+                                    chat.resolvedGroupMembers(myDefaultName).filter { !it.isMe }
+                                }
+                                if (quickMembers.isNotEmpty()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        quickMembers.forEach { member ->
+                                            FilterChip(
+                                                selected = customGroupSender.equals(member.name, ignoreCase = true),
+                                                onClick = { viewModel.setCustomGroupSenderName(member.name) },
+                                                label = { Text(member.name.take(18)) }
+                                            )
+                                        }
+                                    }
+                                }
                                 OutlinedTextField(
                                     value = customGroupSender,
                                     onValueChange = { if (it.length <= 40) viewModel.setCustomGroupSenderName(it) },
@@ -780,7 +820,7 @@ fun ChatRoomScreen(
 
     if (showChatSettings && chat != null) {
         ChatEditorSheet(
-            title = "Configurar chat",
+            title = if (chat.groupChat) "Info. y miembros del grupo" else "Configurar chat",
             confirmLabel = "Guardar cambios",
             initialContactName = chat.contactName,
             initialGroupChat = chat.groupChat,
@@ -793,12 +833,15 @@ fun ChatRoomScreen(
             initialWallpaper = chat.parsedWallpaper,
             initialUnreadCount = chat.unreadCount,
             initialPinned = chat.pinned,
+            initialGroupMembers = chat.resolvedGroupMembers(myDefaultName),
+            availableChats = availableChats,
             isEditingExistingChat = true,
             myDefaultName = myDefaultName,
             onContactImportError = { msg -> viewModel.emitError(msg) },
             onDismiss = { showChatSettings = false },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, pendingTxt ->
+            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
                 showChatSettings = false
+                val encodedMembers = if (isGroup) GroupMembersCodec.encode(members) else null
                 viewModel.updateChatSettings(
                     contactName = name,
                     groupChat = isGroup,
@@ -812,6 +855,8 @@ fun ChatRoomScreen(
                     wallpaperTheme = wallpaper,
                     unreadCount = unread,
                     pinned = pinned,
+                    groupMembersJson = encodedMembers,
+                    clearGroupMembers = !isGroup || encodedMembers == null,
                     pendingTxtImport = pendingTxt
                 )
             }
@@ -1497,11 +1542,9 @@ private fun MessageStudioSheet(
     }
 
     val willHaveMedia = pendingMediaUri != null || (hasExistingMedia && !clearExistingMedia)
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
+    InWindowModalSheet(
+        onDismiss = onDismiss
     ) {
         Column(
             modifier = Modifier

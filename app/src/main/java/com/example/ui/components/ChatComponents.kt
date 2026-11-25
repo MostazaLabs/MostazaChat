@@ -61,14 +61,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +91,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.AvatarPresets
 import com.example.data.model.FakeChat
+import com.example.data.model.GroupMember
+import com.example.data.model.GroupMembersCodec
 import com.example.data.model.TickStatus
 import com.example.data.model.WallpaperTheme
 import com.example.media.MediaImportHelper
@@ -479,6 +479,8 @@ fun ChatEditorSheet(
     initialWallpaper: WallpaperTheme = WallpaperTheme.CLASSIC,
     initialUnreadCount: Long = 0L,
     initialPinned: Boolean = false,
+    initialGroupMembers: List<GroupMember> = emptyList(),
+    availableChats: List<FakeChat> = emptyList(),
     isEditingExistingChat: Boolean = false,
     myDefaultName: String = "Yo",
     userDisplayName: String = "",
@@ -498,6 +500,7 @@ fun ChatEditorSheet(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        groupMembers: List<GroupMember>,
         pendingTxtImport: PendingTxtImport?
     ) -> Unit
 ) {
@@ -516,6 +519,16 @@ fun ChatEditorSheet(
     var wallpaper by remember(initialWallpaper) { mutableStateOf(initialWallpaper) }
     var unreadText by remember(initialUnreadCount) { mutableStateOf(initialUnreadCount.toString()) }
     var pinned by remember(initialPinned) { mutableStateOf(initialPinned) }
+    var groupMembers by remember(initialGroupMembers, initialGroupChat, initialStatusText) {
+        mutableStateOf(
+            when {
+                initialGroupMembers.isNotEmpty() -> initialGroupMembers
+                initialGroupChat -> GroupMembersCodec.fromStatusTextFallback(initialStatusText, myDefaultName)
+                    .ifEmpty { listOf(defaultMeGroupMember()) }
+                else -> emptyList()
+            }
+        )
+    }
     var showGalleryConsent by remember { mutableStateOf(false) }
     var showMessagingCloneSheet by remember { mutableStateOf(false) }
     var pendingTxtImport by remember { mutableStateOf<PendingTxtImport?>(null) }
@@ -574,6 +587,9 @@ fun ChatEditorSheet(
                 }
                 if (likelyGroupDetected) {
                     groupChat = true
+                    if (groupMembers.isEmpty()) {
+                        groupMembers = GroupMembersCodec.fromWhatsAppParticipants(allParticipants, autoMe)
+                    }
                     if (statusText == "en línea") {
                         statusText = allParticipants.take(4).joinToString(", ").take(80)
                     }
@@ -708,11 +724,8 @@ fun ChatEditorSheet(
         }
     }
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
+    InWindowModalSheet(
+        onDismiss = onDismiss
     ) {
         Column(
             modifier = Modifier
@@ -1061,14 +1074,44 @@ fun ChatEditorSheet(
                     SwitchRow(
                         label = "Es grupo",
                         checked = groupChat,
-                        onCheckedChange = {
-                            groupChat = it
-                            if (it && statusText == "en línea") {
-                                statusText = "Tú, Sofía, Carlos, Ana"
+                        onCheckedChange = { checked ->
+                            groupChat = checked
+                            if (checked) {
+                                if (groupMembers.isEmpty()) {
+                                    val seeded = listOf(defaultMeGroupMember())
+                                    groupMembers = seeded
+                                    if (statusText == "en línea" || statusText.isBlank()) {
+                                        statusText = GroupMembersCodec.buildStatusSummary(seeded)
+                                    }
+                                } else if (statusText == "en línea") {
+                                    statusText = GroupMembersCodec.buildStatusSummary(groupMembers)
+                                }
                             }
                         }
                     )
                 }
+            }
+
+            if (groupChat) {
+                GroupMembersSection(
+                    members = groupMembers,
+                    availableChats = availableChats,
+                    groupTitle = contactName,
+                    groupAvatarEmoji = avatarEmoji,
+                    groupAvatarColorHex = avatarColorHex,
+                    groupAvatarImageBase64 = avatarImageBase64,
+                    onMembersChanged = { updatedMembers ->
+                        val previousSummary = GroupMembersCodec.buildStatusSummary(groupMembers)
+                        groupMembers = updatedMembers
+                        if (statusText.isBlank() || statusText == "en línea" || statusText == previousSummary || statusText.startsWith("Tú, Sofía, Carlos")) {
+                            statusText = if (updatedMembers.isNotEmpty()) {
+                                GroupMembersCodec.buildStatusSummary(updatedMembers)
+                            } else {
+                                "Grupo"
+                            }
+                        }
+                    }
+                )
             }
 
             SwitchRow(
@@ -1116,6 +1159,7 @@ fun ChatEditorSheet(
                             wallpaper,
                             unread,
                             pinned,
+                            if (groupChat) groupMembers else emptyList(),
                             pendingTxtImport
                         )
                     },

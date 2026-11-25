@@ -64,12 +64,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -106,6 +104,7 @@ import com.example.data.model.FakeMessage
 import com.example.data.model.MessageType
 import com.example.data.model.SenderRole
 import com.example.media.MediaImportHelper
+import com.example.ui.components.InWindowModalSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -772,7 +771,6 @@ fun ChatMediaAndSearchSheet(
 ) {
     var query by remember { mutableStateOf("") }
     var activeTab by remember { mutableStateOf(MediaSearchTab.ALL) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val indexedMessages = remember(messages) {
         messages.mapIndexed { idx, msg -> idx to msg }
@@ -819,9 +817,8 @@ fun ChatMediaAndSearchSheet(
     val totalPhotos = remember(messages) { messages.count { it.parsedMessageType == MessageType.IMAGE } }
     val totalVideos = remember(messages) { messages.count { it.parsedMessageType == MessageType.VIDEO } }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
+    InWindowModalSheet(
+        onDismiss = onDismiss
     ) {
         Column(
             modifier = Modifier

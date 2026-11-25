@@ -8,6 +8,7 @@ import com.example.data.model.CallType
 import com.example.data.model.FakeCallRecord
 import com.example.data.model.FakeChat
 import com.example.data.model.FakeMessage
+import com.example.data.model.GroupMembersCodec
 import com.example.data.model.MessageType
 import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
@@ -126,12 +127,18 @@ class LocalChatMockRepository(
         wallpaperTheme: WallpaperTheme,
         unreadCount: Long,
         pinned: Boolean,
+        groupMembersJson: String?,
     ): Result<String> {
         return try {
             val safeName = contactName.trim().take(60)
             require(safeName.isNotEmpty()) { "El nombre del contacto no puede estar vacío" }
             val chatId = UUID.randomUUID().toString()
             val now = System.currentTimeMillis()
+            val safeMembers = if (groupChat) {
+                groupMembersJson?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32000 }
+            } else {
+                null
+            }
             val entity = LocalChatEntity(
                 id = chatId,
                 userId = userId,
@@ -146,6 +153,7 @@ class LocalChatMockRepository(
                 wallpaperTheme = wallpaperTheme.name,
                 unreadCount = unreadCount.coerceIn(0L, 9999L),
                 pinned = pinned,
+                groupMembersJson = safeMembers,
                 lastMessagePreview = "Conversación lista para editar",
                 lastMessageTime = currentTimeString(),
                 lastMessageSender = SenderRole.SYSTEM.name,
@@ -305,6 +313,8 @@ class LocalChatMockRepository(
         wallpaperTheme: WallpaperTheme?,
         unreadCount: Long?,
         pinned: Boolean?,
+        groupMembersJson: String?,
+        clearGroupMembers: Boolean,
     ): Result<Unit> {
         return try {
             val current = dao.getChatOnce(userId, chatId)
@@ -315,9 +325,15 @@ class LocalChatMockRepository(
                 avatarImageBase64?.trim()?.takeIf { it.isNotEmpty() && it.length <= 48000 }
                     ?: current.avatarImageBase64
             }
+            val effectiveGroup = groupChat ?: current.groupChat
+            val updatedMembers = when {
+                clearGroupMembers || !effectiveGroup -> null
+                groupMembersJson != null -> groupMembersJson.trim().takeIf { it.isNotEmpty() && it.length <= 32000 }
+                else -> current.groupMembersJson
+            }
             val updated = current.copy(
                 contactName = contactName?.trim()?.takeIf { it.isNotEmpty() }?.take(60) ?: current.contactName,
-                groupChat = groupChat ?: current.groupChat,
+                groupChat = effectiveGroup,
                 statusText = statusText?.trim()?.take(80) ?: current.statusText,
                 online = online ?: current.online,
                 verified = verified ?: current.verified,
@@ -327,6 +343,7 @@ class LocalChatMockRepository(
                 wallpaperTheme = wallpaperTheme?.name ?: current.wallpaperTheme,
                 unreadCount = unreadCount?.coerceIn(0L, 9999L) ?: current.unreadCount,
                 pinned = pinned ?: current.pinned,
+                groupMembersJson = updatedMembers,
                 updatedAtMillis = System.currentTimeMillis()
             )
             dao.updateChat(updated)
@@ -614,6 +631,7 @@ class LocalChatMockRepository(
                         put("wallpaperTheme", chat.wallpaperTheme)
                         put("unreadCount", chat.unreadCount)
                         put("pinned", chat.pinned)
+                        chat.groupMembersJson?.let { put("groupMembersJson", it) }
                         put("lastMessagePreview", chat.lastMessagePreview)
                         put("lastMessageTime", chat.lastMessageTime)
                         put("lastMessageSender", chat.lastMessageSender)
@@ -664,6 +682,7 @@ class LocalChatMockRepository(
                     wallpaperTheme = WallpaperTheme.fromRaw(chatObj.optString("wallpaperTheme")).name,
                     unreadCount = chatObj.optLong("unreadCount", 0L).coerceIn(0L, 9999L),
                     pinned = chatObj.optBoolean("pinned", false),
+                    groupMembersJson = chatObj.optString("groupMembersJson", "").takeIf { it.isNotBlank() && it.length <= 32000 },
                     lastMessagePreview = chatObj.optString("lastMessagePreview", "Chat importado").take(300),
                     lastMessageTime = chatObj.optString("lastMessageTime", currentTimeString()).take(24),
                     lastMessageSender = SenderRole.fromRaw(chatObj.optString("lastMessageSender")).name,
@@ -742,6 +761,14 @@ class LocalChatMockRepository(
             val lastPreview = (lastParsed?.text ?: "Chat importado de WhatsApp").replace('\n', ' ').trim().take(300)
             val lastTime = (lastParsed?.timeLabel ?: currentTimeString()).trim().ifBlank { currentTimeString() }.take(24)
 
+            val groupMembersEncoded = if (isGroup) {
+                GroupMembersCodec.encode(
+                    GroupMembersCodec.fromWhatsAppParticipants(parsed.participants, myParticipantName)
+                )
+            } else {
+                null
+            }
+
             val chatEntity = LocalChatEntity(
                 id = chatId,
                 userId = userId,
@@ -760,6 +787,7 @@ class LocalChatMockRepository(
                 wallpaperTheme = WallpaperTheme.CLASSIC.name,
                 unreadCount = 0L,
                 pinned = false,
+                groupMembersJson = groupMembersEncoded,
                 lastMessagePreview = lastPreview,
                 lastMessageTime = lastTime,
                 lastMessageSender = lastSenderRole.name,
@@ -918,6 +946,7 @@ class LocalChatMockRepository(
         wallpaperTheme = wallpaperTheme,
         unreadCount = unreadCount,
         pinned = pinned,
+        groupMembersJson = groupMembersJson,
         lastMessagePreview = lastMessagePreview,
         lastMessageTime = lastMessageTime,
         lastMessageSender = lastMessageSender,

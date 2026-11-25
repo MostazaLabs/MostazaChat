@@ -52,6 +52,7 @@ service cloud.firestore {
              data.wallpaperTheme in ['CLASSIC', 'MIDNIGHT', 'MINT', 'OCEAN', 'CORAL'] &&
              data.unreadCount is int && data.unreadCount >= 0 && data.unreadCount <= 9999 &&
              data.pinned is bool &&
+             (!('groupMembersJson' in data) || (data.groupMembersJson is string && data.groupMembersJson.size() <= 32000)) &&
              data.lastMessagePreview is string && data.lastMessagePreview.size() <= 300 &&
              data.lastMessageTime is string && data.lastMessageTime.size() <= 24 &&
              data.lastMessageSender in ['ME', 'OTHER', 'SYSTEM'] &&
@@ -132,7 +133,7 @@ service cloud.firestore {
                          incoming().keys().hasOnly([
                            'userId', 'contactName', 'groupChat', 'statusText', 'online', 'verified',
                            'avatarEmoji', 'avatarColorHex', 'avatarImageBase64', 'wallpaperTheme',
-                           'unreadCount', 'pinned', 'lastMessagePreview', 'lastMessageTime',
+                           'unreadCount', 'pinned', 'groupMembersJson', 'lastMessagePreview', 'lastMessageTime',
                            'lastMessageSender', 'lastMessageTick', 'createdAt', 'updatedAt'
                          ]) &&
                          isValidTimestamp(incoming().createdAt) &&
@@ -148,7 +149,7 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'contactName', 'groupChat', 'statusText', 'online', 'verified',
                            'avatarEmoji', 'avatarColorHex', 'avatarImageBase64', 'wallpaperTheme',
-                           'unreadCount', 'pinned', 'lastMessagePreview', 'lastMessageTime',
+                           'unreadCount', 'pinned', 'groupMembersJson', 'lastMessagePreview', 'lastMessageTime',
                            'lastMessageSender', 'lastMessageTick', 'updatedAt'
                          ]);
 

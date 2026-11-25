@@ -7,6 +7,8 @@ import com.example.data.local.LocalChatDatabase
 import com.example.data.local.LocalChatMockRepository
 import com.example.data.model.CallDirection
 import com.example.data.model.CallType
+import com.example.data.model.GroupMember
+import com.example.data.model.GroupMembersCodec
 import com.example.data.model.MessageType
 import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
@@ -290,5 +292,89 @@ class LocalChatMockRepositoryTest {
         assertEquals(MessageType.TEXT, clearedMsg.parsedMessageType)
         assertEquals(null, clearedMsg.localMediaPath)
         assertEquals(null, clearedMsg.mediaFileName)
+    }
+
+    @Test
+    fun createsGroupFromChatsPersistsMembersAndSurvivesJsonBackup() = runTest {
+        val sarahId = repo.createChat(
+            userId = userId,
+            contactName = "Sarah Aalvik",
+            groupChat = false,
+            statusText = "en línea",
+            online = true,
+            verified = false,
+            avatarEmoji = "SA",
+            avatarColorHex = "#4F46E5",
+            avatarImageBase64 = null,
+            wallpaperTheme = WallpaperTheme.CLASSIC,
+            unreadCount = 0L,
+            pinned = false
+        ).getOrThrow()
+
+        val members = listOf(
+            GroupMember(name = "Tú", statusText = "9 hace minutos", avatarEmoji = "TÚ", avatarColorHex = "#00796B", isAdmin = true, isMe = true),
+            GroupMember(chatId = sarahId, name = "Sarah Aalvik", statusText = "en línea", avatarEmoji = "SA", avatarColorHex = "#4F46E5", isAdmin = false, isMe = false),
+            GroupMember(name = "Anna Andreiq", statusText = "20 hace minutos", avatarEmoji = "AA", avatarColorHex = "#E11D48", isAdmin = false, isMe = false)
+        )
+        val encoded = GroupMembersCodec.encode(members)
+        val groupId = repo.createChat(
+            userId = userId,
+            contactName = "Wildxgs",
+            groupChat = true,
+            statusText = GroupMembersCodec.buildStatusSummary(members),
+            online = false,
+            verified = false,
+            avatarEmoji = "W",
+            avatarColorHex = "#00796B",
+            avatarImageBase64 = null,
+            wallpaperTheme = WallpaperTheme.MIDNIGHT,
+            unreadCount = 0L,
+            pinned = true,
+            groupMembersJson = encoded
+        ).getOrThrow()
+
+        val loadedGroup = repo.observeChat(userId, groupId).first()
+        assertEquals(true, loadedGroup?.groupChat)
+        assertEquals(3, loadedGroup?.parsedGroupMembers?.size)
+        assertEquals(true, loadedGroup?.parsedGroupMembers?.first()?.isAdmin)
+        assertEquals(sarahId, loadedGroup?.parsedGroupMembers?.get(1)?.chatId)
+
+        val backupJson = repo.exportWorkspaceToJson(userId).getOrThrow()
+        repo.deleteChat(userId, groupId).getOrThrow()
+        repo.deleteChat(userId, sarahId).getOrThrow()
+        assertEquals(0, repo.observeChats(userId).first().size)
+
+        val restoredCount = repo.importWorkspaceFromJson(userId, backupJson).getOrThrow()
+        assertEquals(2, restoredCount)
+        val restoredGroup = repo.observeChats(userId).first().first { it.groupChat }
+        assertEquals(3, restoredGroup.parsedGroupMembers.size)
+        assertEquals("Anna Andreiq", restoredGroup.parsedGroupMembers[2].name)
+    }
+
+    @Test
+    fun whatsAppGroupImportPopulatesMembersAndLegacyStatusFallbackWorks() = runTest {
+        val sample = """
+            21/11/24, 14:32 - Carlos: Hola equipo
+            21/11/24, 14:33 - Lucía: Todo listo
+            21/11/24, 14:34 - Pablo: Genial!
+        """.trimIndent()
+        val parsed = WhatsAppTxtParser.parseText(sample, "Grupo Proyecto.txt").getOrThrow()
+        val (chatId, _) = repo.importWhatsAppChat(
+            userId = userId,
+            parsed = parsed,
+            chatTitle = "Proyecto",
+            myParticipantName = "Pablo",
+            isGroup = true
+        ).getOrThrow()
+
+        val imported = repo.observeChat(userId, chatId).first()
+        val resolved = imported?.resolvedGroupMembers("Pablo").orEmpty()
+        assertEquals(3, resolved.size)
+        assertEquals("Tú", resolved.first().name)
+        assertEquals(true, resolved.first().isAdmin)
+
+        val legacyFallback = GroupMembersCodec.fromStatusTextFallback("Tú, Sofía, Carlos, Ana")
+        assertEquals(4, legacyFallback.size)
+        assertEquals(true, legacyFallback.first().isMe)
     }
 }
