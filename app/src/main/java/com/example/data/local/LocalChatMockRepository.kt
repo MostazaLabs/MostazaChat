@@ -642,7 +642,7 @@ class LocalChatMockRepository(
                 )
             }
             val root = JSONObject().apply {
-                put("app", "MostazaChat")
+                put("app", "MostazaFake")
                 put("developer", "MostazaLabs")
                 put("version", 1)
                 put("exportedAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date()))

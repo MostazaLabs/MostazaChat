@@ -151,14 +151,29 @@ fun AuthScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "MostazaChat",
+                    text = "MostazaFake",
                     style = MaterialTheme.typography.displaySmall,
                     color = MaterialTheme.colorScheme.onBackground
                 )
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "App para crear conversaciones ficticias y simular chats NO reales. Ningún diálogo representa una conversación real.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    )
+                }
                 Text(
-                    text = "Crea chats y llamadas simuladas clonando contactos de tu agenda y conservando todo tu historial en la nube al cambiar de móvil.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = "Diseña chats simulados, importa desde tu agenda o modelos externos y conserva tu estudio en local o en la nube.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
                 )
             }
 
@@ -301,7 +316,7 @@ fun AuthScreen(
             }
 
             Text(
-                text = "Aplicación de entretenimiento y simulación. Las conversaciones son creadas manualmente por ti.",
+                text = "MostazaFake (+18 / Filtro configurable). Aplicación de entretenimiento, roleplay y simulación con marca de agua verificable en capturas.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

@@ -55,7 +55,7 @@ enum class BackupProvider(
         category = ProviderCategory.CLOUD,
         accentColorHex = "#0061D5",
         subtitleEs = "Conecta con Box mediante WebDAV, ruta o selector del sistema.",
-        routeHint = "https://dav.box.com/dav/MostazaChat/backup.json",
+        routeHint = "https://dav.box.com/dav/MostazaFake/backup.json",
         portalUrl = "https://app.box.com",
         supportsHttpSync = true,
         supportsAuthFields = true
@@ -99,7 +99,7 @@ enum class BackupProvider(
         category = ProviderCategory.CLOUD,
         accentColorHex = "#1D4ED8",
         subtitleEs = "Nube privada Internxt vía WebDAV o selector Android.",
-        routeHint = "https://webdav.internxt.com/MostazaChat/backup.json",
+        routeHint = "https://webdav.internxt.com/MostazaFake/backup.json",
         portalUrl = "https://drive.internxt.com",
         supportsHttpSync = true,
         supportsAuthFields = true
@@ -110,7 +110,7 @@ enum class BackupProvider(
         category = ProviderCategory.REMOTE,
         accentColorHex = "#0F766E",
         subtitleEs = "Tu propio servidor HTTPS/WebDAV o endpoint personalizado.",
-        routeHint = "https://mi-servidor.com/respaldos/mostazachat.json",
+        routeHint = "https://mi-servidor.com/respaldos/mostazafake.json",
         portalUrl = null,
         supportsHttpSync = true,
         supportsAuthFields = true
@@ -121,7 +121,7 @@ enum class BackupProvider(
         category = ProviderCategory.REMOTE,
         accentColorHex = "#475569",
         subtitleEs = "PC o NAS en tu red Wi-Fi (HTTPS/WebDAV o gestor de archivos).",
-        routeHint = "https://192.168.1.50:8443/mostazachat.json",
+        routeHint = "https://192.168.1.50:8443/mostazafake.json",
         portalUrl = null,
         supportsHttpSync = true,
         supportsAuthFields = true
@@ -132,7 +132,7 @@ enum class BackupProvider(
         category = ProviderCategory.REMOTE,
         accentColorHex = "#334155",
         subtitleEs = "Carpeta compartida Windows/NAS (ruta smb:// + selector Android).",
-        routeHint = "smb://192.168.1.50/Compartido/MostazaChat",
+        routeHint = "smb://192.168.1.50/Compartido/MostazaFake",
         portalUrl = null,
         supportsHttpSync = false,
         supportsAuthFields = false
@@ -143,7 +143,7 @@ enum class BackupProvider(
         category = ProviderCategory.REMOTE,
         accentColorHex = "#1D4ED8",
         subtitleEs = "Ruta de servidor FTP para acceder desde tu gestor compatible.",
-        routeHint = "ftp://192.168.1.50:21/MostazaChat",
+        routeHint = "ftp://192.168.1.50:21/MostazaFake",
         portalUrl = null,
         supportsHttpSync = false,
         supportsAuthFields = false
@@ -154,7 +154,7 @@ enum class BackupProvider(
         category = ProviderCategory.REMOTE,
         accentColorHex = "#4338CA",
         subtitleEs = "Ruta SSH/SFTP segura para localizar tus copias de respaldo.",
-        routeHint = "sftp://usuario@192.168.1.50/backups/MostazaChat",
+        routeHint = "sftp://usuario@192.168.1.50/backups/MostazaFake",
         portalUrl = null,
         supportsHttpSync = false,
         supportsAuthFields = false
@@ -165,7 +165,7 @@ enum class BackupProvider(
         category = ProviderCategory.REMOTE,
         accentColorHex = "#0369A1",
         subtitleEs = "Sincronización directa GET/PUT (Nextcloud, ownCloud, NAS).",
-        routeHint = "https://nube.tudominio.com/remote.php/dav/files/usuario/mostazachat.json",
+        routeHint = "https://nube.tudominio.com/remote.php/dav/files/usuario/mostazafake.json",
         portalUrl = null,
         supportsHttpSync = true,
         supportsAuthFields = true

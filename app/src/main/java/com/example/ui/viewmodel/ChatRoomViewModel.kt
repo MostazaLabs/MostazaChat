@@ -13,8 +13,12 @@ import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
 import com.example.data.model.UiState
 import com.example.data.model.WallpaperTheme
+import com.example.llm.ChatAiConfig
+import com.example.llm.ExternalLlmClient
+import com.example.llm.LlmGlobalSettings
 import com.example.media.MediaImportHelper
 import com.example.media.PendingTxtImport
+import com.example.safety.SensitiveContentFilter
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -95,6 +99,9 @@ class ChatRoomViewModel(
     private val _isSimulatingTyping = MutableStateFlow(false)
     val isSimulatingTyping = _isSimulatingTyping.asStateFlow()
 
+    private val _isGeneratingAiReply = MutableStateFlow(false)
+    val isGeneratingAiReply = _isGeneratingAiReply.asStateFlow()
+
     private val _isImportingMedia = MutableStateFlow(false)
     val isImportingMedia = _isImportingMedia.asStateFlow()
 
@@ -102,6 +109,7 @@ class ChatRoomViewModel(
     val errorBanner = _errorBanner.asStateFlow()
 
     private var typingJob: Job? = null
+    private var aiReplyJob: Job? = null
 
     fun setComposerRole(role: SenderRole) {
         _composerRole.value = role
@@ -312,6 +320,79 @@ class ChatRoomViewModel(
             _isSimulatingTyping.value = true
             delay(durationMs)
             _isSimulatingTyping.value = false
+        }
+    }
+
+    fun generateAiReply(
+        globalSettings: LlmGlobalSettings,
+        chatAiConfig: ChatAiConfig,
+        myDefaultName: String,
+        sensitiveFilterEnabled: Boolean,
+        extraPendingUserMessage: String? = null
+    ) {
+        val chat = (chatState.value as? UiState.Success)?.data ?: return
+        if (!globalSettings.isConfiguredAndEnabled || !chatAiConfig.enabled) {
+            _errorBanner.value = "Activa primero un proveedor LLM en el menú derecho y en la ficha de este chat."
+            return
+        }
+        val currentMessages = (messagesState.value as? UiState.Success)?.data.orEmpty().let { list ->
+            val cleanExtra = extraPendingUserMessage?.trim().orEmpty()
+            if (cleanExtra.isNotEmpty()) {
+                list + FakeMessage(
+                    id = "pending_local",
+                    senderRole = SenderRole.ME.name,
+                    senderName = myDefaultName,
+                    text = cleanExtra,
+                    messageType = MessageType.TEXT.name
+                )
+            } else {
+                list
+            }
+        }
+        val preferredSpeaker = if (chat.groupChat) {
+            _customGroupSenderName.value.trim().takeIf { it.isNotEmpty() }
+        } else {
+            chat.contactName
+        }
+
+        aiReplyJob?.cancel()
+        aiReplyJob = viewModelScope.launch {
+            _isGeneratingAiReply.value = true
+            val result = ExternalLlmClient.generateCharacterReply(
+                settings = globalSettings,
+                chat = chat,
+                chatConfig = chatAiConfig,
+                recentMessages = currentMessages,
+                myDefaultName = myDefaultName,
+                preferredGroupSpeaker = preferredSpeaker,
+                sensitiveFilterEnabled = sensitiveFilterEnabled
+            )
+            _isGeneratingAiReply.value = false
+            result.onSuccess { reply ->
+                if (sensitiveFilterEnabled && SensitiveContentFilter.containsSensitiveContent(reply.text)) {
+                    _errorBanner.value = "El filtro de edad (+18) bloqueó la respuesta del LLM porque contenía texto sensible."
+                    return@onSuccess
+                }
+                val timeLabel = _customTime.value.trim().ifBlank { currentClockTime() }
+                val dateLabel = _customDateLabel.value.trim().ifBlank { "HOY" }
+                val orderIdx = nextOrderIndex()
+                repository.sendMessage(
+                    userId = currentUserId,
+                    chatId = chatId,
+                    senderRole = SenderRole.OTHER,
+                    senderName = reply.speakerName,
+                    text = reply.text,
+                    messageType = MessageType.TEXT,
+                    displayTime = timeLabel,
+                    dateLabel = dateLabel,
+                    tickStatus = TickStatus.READ,
+                    orderIndex = orderIdx
+                ).onFailure { err ->
+                    _errorBanner.value = err.localizedMessage ?: "No se pudo guardar la respuesta del LLM"
+                }
+            }.onFailure { err ->
+                _errorBanner.value = err.localizedMessage ?: "Error al conectar con el LLM externo"
+            }
         }
     }
 

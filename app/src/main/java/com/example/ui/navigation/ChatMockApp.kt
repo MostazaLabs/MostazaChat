@@ -3,6 +3,7 @@ package com.example.ui.navigation
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
@@ -39,10 +40,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import com.example.ui.components.InWindowSheetHost
-import com.example.ui.components.InWindowSheetHostContainer
-import com.example.ui.components.LocalInWindowSheetHost
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -70,6 +72,13 @@ import com.example.data.ChatDataRepository
 import com.example.data.firestore.ChatMockRepository
 import com.example.data.local.LocalChatMockRepository
 import com.example.data.model.UiState
+import com.example.media.ScreenshotWatermarkEngine
+import com.example.media.WatermarkPayload
+import com.example.safety.AgeAndFictionGateDialog
+import com.example.safety.SafetyPrefsStore
+import com.example.ui.components.InWindowSheetHost
+import com.example.ui.components.InWindowSheetHostContainer
+import com.example.ui.components.LocalInWindowSheetHost
 import com.example.ui.screens.CallsTabScreen
 import com.example.ui.screens.ChatRoomScreen
 import com.example.ui.screens.ChatsListScreen
@@ -111,9 +120,13 @@ private fun buildTopTabs(isGuestMode: Boolean, localLabel: String = "Local"): Li
 @Composable
 fun ChatMockApp(
     sharedIntent: Intent? = null,
-    onConsumeSharedIntent: () -> Unit = {}
+    onConsumeSharedIntent: () -> Unit = {},
+    screenCaptureSignal: Int = 0
 ) {
     val context = LocalContext.current
+    SafetyPrefsStore.ensureInitialized(context)
+    val safetySettings by SafetyPrefsStore.settings.collectAsStateWithLifecycle()
+
     val prefs = remember(context) {
         context.applicationContext.getSharedPreferences(SESSION_PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -135,84 +148,143 @@ fun ChatMockApp(
 
     val isExternalActive = externalSession?.active == true
     val sheetHost = remember { InWindowSheetHost() }
+    val rootGraphicsLayer = rememberGraphicsLayer()
+    val appScope = rememberCoroutineScope()
 
-    CompositionLocalProvider(LocalInWindowSheetHost provides sheetHost) {
-        InWindowSheetHostContainer(host = sheetHost) {
-            when {
-        user != null -> {
-            key("cloud_${user.uid}") {
-                ChatMockWorkspaceRoot(
-                    isGuestMode = false,
-                    currentUserId = user.uid,
-                    userDisplayName = user.displayName ?: "Usuario",
-                    userEmail = user.email,
-                    externalSession = externalSession,
-                    pendingAutoImportConfig = null,
-                    onConsumePendingAutoImport = {},
-                    sharedIntent = sharedIntent,
-                    onConsumeSharedIntent = onConsumeSharedIntent,
-                    onUpdateExternalSession = { updated, _ ->
-                        ExternalSessionStore.save(context, updated)
-                        externalSession = updated
-                    },
-                    onExitGuestMode = {}
-                )
+    val captureVerifiedScreen: (screenLabel: String, chatId: String?, showFeedback: (String) -> Unit) -> Unit =
+        remember(context, rootGraphicsLayer) {
+            { screenLabel, chatId, showFeedback ->
+                appScope.launch {
+                    runCatching {
+                        val imageBitmap = rootGraphicsLayer.toImageBitmap()
+                        val rawBitmap = imageBitmap.asAndroidBitmap()
+                        val payload = WatermarkPayload(
+                            screen = screenLabel,
+                            chatId = chatId
+                        )
+                        ScreenshotWatermarkEngine.saveWatermarkedScreenshotToGallery(
+                            context = context,
+                            rawBitmap = rawBitmap,
+                            payload = payload
+                        ).getOrThrow()
+                    }.onSuccess {
+                        showFeedback("Captura verificada guardada con marca de agua invisible y metadatos sintéticos")
+                    }.onFailure { err ->
+                        showFeedback(err.localizedMessage ?: "No se pudo guardar la captura verificada")
+                    }
+                }
             }
         }
-        isGuestMode || isExternalActive -> {
-            val activeExt = externalSession?.takeIf { it.active }
-            val displayName = when {
-                activeExt != null && activeExt.accountLabel.isNotBlank() -> activeExt.accountLabel
-                activeExt != null -> activeExt.provider.displayName
-                else -> "Invitado local"
+
+    LaunchedEffect(screenCaptureSignal) {
+        if (screenCaptureSignal > 0) {
+            captureVerifiedScreen("system_capture", null) { msg ->
+                Toast.makeText(context.applicationContext, msg, Toast.LENGTH_LONG).show()
             }
-            key("local_guest") {
-                ChatMockWorkspaceRoot(
-                    isGuestMode = true,
-                    currentUserId = LocalChatMockRepository.DEFAULT_GUEST_USER_ID,
-                    userDisplayName = displayName,
-                    userEmail = null,
-                    externalSession = activeExt,
-                    pendingAutoImportConfig = pendingAutoImportConfig,
-                    onConsumePendingAutoImport = { pendingAutoImportConfig = null },
-                    sharedIntent = sharedIntent,
-                    onConsumeSharedIntent = onConsumeSharedIntent,
-                    onUpdateExternalSession = { updated, _ ->
-                        ExternalSessionStore.save(context, updated)
-                        externalSession = updated
+        }
+    }
+
+    CompositionLocalProvider(LocalInWindowSheetHost provides sheetHost) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    rootGraphicsLayer.record {
+                        this@drawWithContent.drawContent()
+                    }
+                    drawLayer(rootGraphicsLayer)
+                }
+        ) {
+            InWindowSheetHostContainer(host = sheetHost) {
+                when {
+                    user != null -> {
+                        key("cloud_${user.uid}") {
+                            ChatMockWorkspaceRoot(
+                                isGuestMode = false,
+                                currentUserId = user.uid,
+                                userDisplayName = user.displayName ?: "Usuario",
+                                userEmail = user.email,
+                                externalSession = externalSession,
+                                pendingAutoImportConfig = null,
+                                onConsumePendingAutoImport = {},
+                                sharedIntent = sharedIntent,
+                                onConsumeSharedIntent = onConsumeSharedIntent,
+                                onCaptureVerifiedScreen = captureVerifiedScreen,
+                                onUpdateExternalSession = { updated, _ ->
+                                    ExternalSessionStore.save(context, updated)
+                                    externalSession = updated
+                                },
+                                onExitGuestMode = {}
+                            )
+                        }
+                    }
+                    isGuestMode || isExternalActive -> {
+                        val activeExt = externalSession?.takeIf { it.active }
+                        val displayName = when {
+                            activeExt != null && activeExt.accountLabel.isNotBlank() -> activeExt.accountLabel
+                            activeExt != null -> activeExt.provider.displayName
+                            else -> "Invitado local"
+                        }
+                        key("local_guest") {
+                            ChatMockWorkspaceRoot(
+                                isGuestMode = true,
+                                currentUserId = LocalChatMockRepository.DEFAULT_GUEST_USER_ID,
+                                userDisplayName = displayName,
+                                userEmail = null,
+                                externalSession = activeExt,
+                                pendingAutoImportConfig = pendingAutoImportConfig,
+                                onConsumePendingAutoImport = { pendingAutoImportConfig = null },
+                                sharedIntent = sharedIntent,
+                                onConsumeSharedIntent = onConsumeSharedIntent,
+                                onCaptureVerifiedScreen = captureVerifiedScreen,
+                                onUpdateExternalSession = { updated, _ ->
+                                    ExternalSessionStore.save(context, updated)
+                                    externalSession = updated
+                                },
+                                onExitGuestMode = {
+                                    isGuestMode = false
+                                    pendingAutoImportConfig = null
+                                    prefs.edit().putBoolean(KEY_IS_GUEST_MODE, false).apply()
+                                    ExternalSessionStore.deactivateSession(context)
+                                    externalSession = externalSession?.copy(active = false)
+                                }
+                            )
+                        }
+                    }
+                    else -> {
+                        AuthScreen(
+                            onAuthSuccess = {
+                                isGuestMode = false
+                                prefs.edit().putBoolean(KEY_IS_GUEST_MODE, false).apply()
+                            },
+                            onContinueAsGuest = {
+                                ExternalSessionStore.deactivateSession(context)
+                                externalSession = externalSession?.copy(active = false)
+                                isGuestMode = true
+                                prefs.edit().putBoolean(KEY_IS_GUEST_MODE, true).apply()
+                            },
+                            onExternalProviderSelected = { config, importImmediately ->
+                                ExternalSessionStore.save(context, config)
+                                externalSession = config
+                                isGuestMode = true
+                                prefs.edit().putBoolean(KEY_IS_GUEST_MODE, true).apply()
+                                pendingAutoImportConfig = if (importImmediately) config else null
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (!safetySettings.ageNoticeAccepted) {
+                AgeAndFictionGateDialog(
+                    onConfirmAdult = { enableSensitiveFilter ->
+                        SafetyPrefsStore.confirmAdultAccess(context, enableSensitiveFilter)
                     },
-                    onExitGuestMode = {
-                        isGuestMode = false
-                        pendingAutoImportConfig = null
-                        prefs.edit().putBoolean(KEY_IS_GUEST_MODE, false).apply()
-                        ExternalSessionStore.deactivateSession(context)
-                        externalSession = externalSession?.copy(active = false)
+                    onConfirmMinorStrict = {
+                        SafetyPrefsStore.confirmMinorOrStrictFilter(context)
                     }
                 )
             }
-        }
-        else -> {
-            AuthScreen(
-                onAuthSuccess = {
-                    isGuestMode = false
-                    prefs.edit().putBoolean(KEY_IS_GUEST_MODE, false).apply()
-                },
-                onContinueAsGuest = {
-                    ExternalSessionStore.deactivateSession(context)
-                    externalSession = externalSession?.copy(active = false)
-                    isGuestMode = true
-                    prefs.edit().putBoolean(KEY_IS_GUEST_MODE, true).apply()
-                },
-                onExternalProviderSelected = { config, importImmediately ->
-                    ExternalSessionStore.save(context, config)
-                    externalSession = config
-                    isGuestMode = true
-                    prefs.edit().putBoolean(KEY_IS_GUEST_MODE, true).apply()
-                    pendingAutoImportConfig = if (importImmediately) config else null
-                }
-            )
-        }
-    }
         }
     }
 }
@@ -237,6 +309,7 @@ private fun ChatMockWorkspaceRoot(
     onConsumePendingAutoImport: () -> Unit,
     sharedIntent: Intent?,
     onConsumeSharedIntent: () -> Unit,
+    onCaptureVerifiedScreen: (screenLabel: String, chatId: String?, showFeedback: (String) -> Unit) -> Unit,
     onUpdateExternalSession: (config: ExternalSessionConfig, importImmediately: Boolean) -> Unit,
     onExitGuestMode: () -> Unit
 ) {
@@ -480,6 +553,15 @@ private fun ChatMockWorkspaceRoot(
                             )
                             ChatRoomScreen(
                                 viewModel = roomViewModel,
+                                onDeleteReportedChat = {
+                                    homeViewModel.deleteChat(chatId)
+                                    navController.popBackStack()
+                                },
+                                onCaptureVerifiedScreenshot = {
+                                    onCaptureVerifiedScreen("chat_room", chatId) { msg ->
+                                        scope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
+                                },
                                 myDefaultName = userProfile?.defaultMyName ?: "Yo",
                                 availableChats = availableChats,
                                 onBack = { navController.popBackStack() },

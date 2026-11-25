@@ -21,24 +21,32 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Computer
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.ImageSearch
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.TheaterComedy
 import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +54,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -70,8 +80,13 @@ import com.example.auth.ExternalSessionConfig
 import com.example.auth.GoogleSignInButton
 import com.example.auth.signOut
 import com.example.data.model.UiState
+import com.example.llm.LlmSettingsSectionCard
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.WhatsAppTxtParser
+import com.example.safety.AdultAgeVerificationDialog
+import com.example.safety.ReportIncidentDialog
+import com.example.safety.SafetyPrefsStore
+import com.example.safety.ScreenshotWatermarkVerifierDialog
 import com.example.ui.components.BackupProviderPickerSheet
 import com.example.ui.components.ProviderBadge
 import com.example.ui.components.WhatsAppImportDialog
@@ -102,15 +117,26 @@ fun CloudSettingsScreen(
     val profile by viewModel.userProfile.collectAsStateWithLifecycle()
     val chatsState by viewModel.chatsState.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
+    SafetyPrefsStore.ensureInitialized(context)
+    val safetySettings by SafetyPrefsStore.settings.collectAsStateWithLifecycle()
+    val incidentReports by SafetyPrefsStore.reports.collectAsStateWithLifecycle()
 
     var defaultMyName by remember { mutableStateOf(profile?.defaultMyName ?: "Yo") }
+    var developerEmailInput by remember { mutableStateOf(safetySettings.developerEmail) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var parsedWhatsAppDraft by remember { mutableStateOf<ParsedWhatsAppChat?>(null) }
     var isParsingWhatsAppTxt by remember { mutableStateOf(false) }
     var showExternalProviderSheet by remember { mutableStateOf(false) }
+    var showAdultVerifyDialog by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
+    var showWatermarkVerifierDialog by remember { mutableStateOf(false) }
+    var showReportHistory by remember { mutableStateOf(false) }
 
     LaunchedEffect(profile?.defaultMyName) {
         profile?.defaultMyName?.let { defaultMyName = it }
+    }
+    LaunchedEffect(safetySettings.developerEmail) {
+        developerEmailInput = safetySettings.developerEmail
     }
 
     // SAF CreateDocument launcher: lets user save directly to Google Drive, Downloads, or share to PC!
@@ -201,6 +227,80 @@ fun CloudSettingsScreen(
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                 }
+
+                // Prominent Presentation & Transparency Banner right at the top of the right menu
+                item {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("presentation_context_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.TheaterComedy,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "MostazaFake",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ) {
+                                    Text(
+                                        text = if (safetySettings.isAdultVerified && !safetySettings.sensitiveFilterEnabled) {
+                                            "+18 • Sin filtro"
+                                        } else {
+                                            "+18 • Filtro activo"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "App para crear conversaciones ficticias y simular chats NO reales.",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Cualquier chat, contacto o roleplay generado aquí es ficción creada por el usuario. Las capturas incorporan marca de agua invisible y metadatos de origen sintético.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Desarrollado por MostazaLabs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+
                 // Cloud or Local Account Card
                 item {
                     Card(
@@ -342,6 +442,203 @@ fun CloudSettingsScreen(
                             }
                         }
                     }
+                }
+
+                // Age Verification, Sensitive Filter, Reports & Watermark Verification Card
+                item {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("safety_moderation_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Edad (+18), Seguridad y Capturas",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Filtro de edad y contenido sensible",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = if (safetySettings.sensitiveFilterEnabled) {
+                                            "Activo: oculta y bloquea contenido adulto o violento"
+                                        } else {
+                                            "Desactivado (+18 verificado) para roleplay sin filtros"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = safetySettings.sensitiveFilterEnabled,
+                                    onCheckedChange = { enable ->
+                                        if (enable) {
+                                            SafetyPrefsStore.setSensitiveFilterEnabled(context, true)
+                                            onShowMessage("Filtro de contenido sensible activado")
+                                        } else {
+                                            val changed = SafetyPrefsStore.setSensitiveFilterEnabled(context, false)
+                                            if (!changed) {
+                                                showAdultVerifyDialog = true
+                                            } else {
+                                                onShowMessage("Filtro sensible desactivado (+18 confirmado)")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("settings_sensitive_filter_switch")
+                                )
+                            }
+
+                            if (!safetySettings.isAdultVerified) {
+                                OutlinedButton(
+                                    onClick = { showAdultVerifyDialog = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Rounded.VerifiedUser, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Confirmar mayoría de edad (+18)")
+                                }
+                            }
+
+                            HorizontalDivider()
+
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "Marca de agua invisible en capturas (siempre activa)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "Cada captura genera copia PNG con señal invisible + metadatos de origen falso y conversación sintetizada.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            FilledTonalButton(
+                                onClick = { showWatermarkVerifierDialog = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("verify_screenshot_watermark_button")
+                            ) {
+                                Icon(Icons.Rounded.ImageSearch, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Verificar marca de agua y metadatos")
+                            }
+
+                            HorizontalDivider()
+
+                            OutlinedTextField(
+                                value = developerEmailInput,
+                                onValueChange = { if (it.length <= 120) developerEmailInput = it },
+                                label = { Text("Correo para envío opcional de reportes") },
+                                placeholder = { Text("soporte@tudominio.com") },
+                                singleLine = true,
+                                trailingIcon = {
+                                    TextButton(
+                                        onClick = {
+                                            SafetyPrefsStore.setDeveloperEmail(context, developerEmailInput)
+                                            onShowMessage("Correo de reportes guardado")
+                                        }
+                                    ) {
+                                        Text("Guardar")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedButton(
+                                onClick = { showReportDialog = true },
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("settings_report_incident_button")
+                            ) {
+                                Icon(Icons.Rounded.Flag, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Reportar contenido o incidente (${incidentReports.size})")
+                            }
+
+                            if (incidentReports.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { showReportHistory = !showReportHistory },
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text(
+                                        if (showReportHistory) "Ocultar historial de reportes"
+                                        else "Ver historial (${incidentReports.size})"
+                                    )
+                                }
+                            }
+
+                            if (showReportHistory && incidentReports.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    incidentReports.take(5).forEach { rep ->
+                                        Surface(
+                                            shape = MaterialTheme.shapes.small,
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(modifier = Modifier.padding(10.dp)) {
+                                                Text(
+                                                    text = "${rep.id} • ${rep.category.labelEs}",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(
+                                                    text = "${rep.createdAtIso}${rep.chatTitle?.let { " • $it" } ?: ""}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                    TextButton(
+                                        onClick = { SafetyPrefsStore.clearReports(context) },
+                                        modifier = Modifier.align(Alignment.End)
+                                    ) {
+                                        Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Limpiar historial local")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Optional External LLM Connectivity Card
+                item {
+                    LlmSettingsSectionCard(onShowMessage = onShowMessage)
                 }
 
                 // Always-on Power Saving Mode Card (Telegram-inspired, permanently enabled)
@@ -623,7 +920,7 @@ fun CloudSettingsScreen(
                                     viewModel.prepareExportJson { json ->
                                         pendingExportJson = json
                                         val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-                                        createBackupLauncher.launch("mostazachat_backup_$stamp.json")
+                                        createBackupLauncher.launch("mostazafake_backup_$stamp.json")
                                     }
                                 },
                                 enabled = !isBusy,
@@ -718,12 +1015,12 @@ fun CloudSettingsScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "MostazaChat",
+                                text = "MostazaFake",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Desarrollado por MostazaLabs",
+                                text = "App de conversaciones ficticias • MostazaLabs",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -773,6 +1070,39 @@ fun CloudSettingsScreen(
                     onShowMessage("Origen actualizado: ${newConfig.provider.displayName}")
                 }
             }
+        )
+    }
+
+    if (showAdultVerifyDialog) {
+        AdultAgeVerificationDialog(
+            onConfirmedAdult = {
+                showAdultVerifyDialog = false
+                SafetyPrefsStore.confirmAdultAccess(context, enableSensitiveFilter = false)
+                onShowMessage("Mayoría de edad (+18) confirmada. Filtro sensible desactivado.")
+            },
+            onDismiss = { showAdultVerifyDialog = false }
+        )
+    }
+
+    if (showReportDialog) {
+        ReportIncidentDialog(
+            developerEmail = safetySettings.developerEmail,
+            canHideContentLocally = false,
+            onDismiss = { showReportDialog = false },
+            onSubmitReport = { category, details, _ ->
+                SafetyPrefsStore.addReport(
+                    context = context,
+                    category = category,
+                    details = details,
+                    hidContentLocally = false
+                )
+            }
+        )
+    }
+
+    if (showWatermarkVerifierDialog) {
+        ScreenshotWatermarkVerifierDialog(
+            onDismiss = { showWatermarkVerifierDialog = false }
         )
     }
 }

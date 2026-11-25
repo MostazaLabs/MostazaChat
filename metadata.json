@@ -1,6 +1,6 @@
 {
-  "name": "MostazaChat",
-  "description": "MostazaChat de MostazaLabs: estudio de conversaciones simuladas con importación desde la agenda y sincronización en la nube entre dispositivos.",
+  "name": "MostazaFake",
+  "description": "MostazaFake de MostazaLabs: app para crear conversaciones ficticias y simular chats NO reales con marca de agua verificable y sincronización.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -69,7 +69,7 @@ object RemoteBackupClient {
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "MostazaChat/1.0")
+                setRequestProperty("User-Agent", "MostazaFake/1.0")
                 setRequestProperty("Accept", "application/json, text/plain, */*")
                 buildAuthorizationHeader(username, secret)?.let {
                     setRequestProperty("Authorization", it)
@@ -145,7 +145,7 @@ object RemoteBackupClient {
                 readTimeout = READ_TIMEOUT_MS
                 instanceFollowRedirects = false
                 setFixedLengthStreamingMode(bytes.size)
-                setRequestProperty("User-Agent", "MostazaChat/1.0")
+                setRequestProperty("User-Agent", "MostazaFake/1.0")
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 buildAuthorizationHeader(username, secret)?.let {
                     setRequestProperty("Authorization", it)

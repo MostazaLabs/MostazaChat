@@ -126,7 +126,7 @@ fun MessagingCloneSheet(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "1. Abre un chat en WhatsApp.\n2. Pulsa ⋮ → Más → Exportar chat.\n3. Elige MostazaChat en la hoja de compartir para clonarlo al instante.",
+                        text = "1. Abre un chat en WhatsApp.\n2. Pulsa ⋮ → Más → Exportar chat.\n3. Elige MostazaFake en la hoja de compartir para clonarlo al instante.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

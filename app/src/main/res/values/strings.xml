@@ -1,14 +1,16 @@
 <resources>
-    <string name="app_name">MostazaChat</string>
+    <string name="app_name">MostazaFake</string>
     <string name="developer_brand">MostazaLabs</string>
-    <string name="app_tagline">Estudio de chats simulados en la nube</string>
+    <string name="app_tagline">App para crear conversaciones ficticias y simular chats NO reales</string>
     <string name="sign_in_with_google">Continuar con Google</string>
-    <string name="cd_hero_illustration">Ilustración de sincronización de chats entre dispositivos</string>
+    <string name="cd_hero_illustration">Ilustración de conversaciones ficticias sincronizadas entre dispositivos</string>
     <string name="cd_back">Volver</string>
     <string name="cd_search">Buscar</string>
     <string name="cd_import_contact">Importar contacto de la agenda</string>
     <string name="cd_new_chat">Crear nuevo chat</string>
     <string name="cd_screenshot_mode">Alternar modo captura</string>
+    <string name="cd_capture_verified_screenshot">Guardar captura verificada con marca de agua</string>
+    <string name="cd_report_content">Reportar contenido o abuso</string>
     <string name="cd_voice_call">Llamada de voz simulada</string>
     <string name="cd_video_call">Videollamada simulada</string>
     <string name="cd_chat_settings">Configuración del chat</string>

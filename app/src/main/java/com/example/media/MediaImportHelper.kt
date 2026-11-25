@@ -397,12 +397,12 @@ object MediaImportHelper {
         context: Context,
         localMediaPath: String?,
         mediaPreviewBase64: String?,
-        displayName: String = "MostazaChat_Foto_${System.currentTimeMillis()}.jpg"
+        displayName: String = "MostazaFake_Foto_${System.currentTimeMillis()}.jpg"
     ): Result<Uri> = withContext(Dispatchers.IO) {
         try {
             val localFile = localMediaPath?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() }
             if (localFile != null && isGifFile(null, localFile.name, localFile.absolutePath)) {
-                val gifDisplayName = "MostazaChat_GIF_${System.currentTimeMillis()}.gif"
+                val gifDisplayName = "MostazaFake_GIF_${System.currentTimeMillis()}.gif"
                 return@withContext saveRawImageFileToGallery(context, localFile, gifDisplayName, "image/gif")
             }
             val bitmap = localFile?.let { BitmapFactory.decodeFile(it.absolutePath) }
@@ -454,6 +454,16 @@ object MediaImportHelper {
         savedCount
     }
 
+    fun savePngBytesToGallery(
+        context: Context,
+        pngBytes: ByteArray,
+        displayName: String = "MostazaFake_Captura_${System.currentTimeMillis()}.png"
+    ): Result<Uri> {
+        return pngBytes.inputStream().use { input ->
+            saveRawImageStreamToGallery(context, input, displayName, "image/png")
+        }
+    }
+
     private fun saveRawImageFileToGallery(
         context: Context,
         sourceFile: File,
@@ -476,7 +486,7 @@ object MediaImportHelper {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MostazaChat")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MostazaFake")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }
@@ -516,7 +526,7 @@ object MediaImportHelper {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MostazaChat")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MostazaFake")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }

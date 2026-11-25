@@ -73,6 +73,8 @@ import com.example.data.model.FakeChat
 import com.example.data.model.GroupMember
 import com.example.data.model.GroupMembersCodec
 import com.example.data.model.WallpaperTheme
+import com.example.llm.ChatAiConfig
+import com.example.llm.OptionalChatAiSection
 import com.example.media.MediaImportHelper
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -650,6 +652,7 @@ private fun GroupMemberFormDialog(
 fun GroupCreatorSheet(
     availableChats: List<FakeChat>,
     onError: (String) -> Unit,
+    onSaveChatAiConfig: ((ChatAiConfig) -> Unit)? = null,
     onDismiss: () -> Unit,
     onCreateGroup: (
         groupName: String,
@@ -676,6 +679,7 @@ fun GroupCreatorSheet(
     var includeMe by remember { mutableStateOf(true) }
     var showAddManualDialog by remember { mutableStateOf(false) }
     var showGalleryConsent by remember { mutableStateOf(false) }
+    var chatAiConfig by remember { mutableStateOf(ChatAiConfig()) }
 
     val selectedChatMembers = remember(individualChats, selectedChatIds) {
         individualChats.filter { it.id in selectedChatIds }.map { it.toGroupMember() }
@@ -1058,6 +1062,12 @@ fun GroupCreatorSheet(
                 }
             }
 
+            OptionalChatAiSection(
+                config = chatAiConfig,
+                isGroup = true,
+                onConfigChanged = { chatAiConfig = it }
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1080,6 +1090,7 @@ fun GroupCreatorSheet(
                         } else {
                             avatarEmoji
                         }
+                        onSaveChatAiConfig?.invoke(chatAiConfig)
                         onCreateGroup(
                             cleanTitle,
                             summary,
@@ -1131,7 +1142,7 @@ fun GroupCreatorSheet(
 
     if (showGalleryConsent) {
         GalleryAccessConsentDialog(
-            purposeText = "MostazaChat te pedirá elegir una única foto para el grupo mediante el selector seguro de Android.",
+            purposeText = "MostazaFake te pedirá elegir una única foto para el grupo mediante el selector seguro de Android.",
             onConfirm = {
                 MediaImportHelper.setGalleryAccessConsentGranted(context)
                 showGalleryConsent = false

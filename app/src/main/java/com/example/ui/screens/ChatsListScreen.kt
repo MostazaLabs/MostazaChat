@@ -98,8 +98,12 @@ import com.example.data.model.GroupMembersCodec
 import com.example.data.model.SenderRole
 import com.example.data.model.UiState
 import com.example.data.model.WallpaperTheme
+import com.example.llm.ChatAiConfig
+import com.example.llm.LlmSettingsStore
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.WhatsAppTxtParser
+import com.example.safety.SafetyPrefsStore
+import com.example.safety.SensitiveContentFilter
 import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
 import com.example.ui.components.ContactAvatarPreviewDialog
@@ -133,6 +137,9 @@ fun ChatsListScreen(
     val activeFilter by viewModel.activeFilter.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    SafetyPrefsStore.ensureInitialized(context)
+    LlmSettingsStore.ensureInitialized(context)
+    val safetySettings by SafetyPrefsStore.settings.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
     var showSearchBar by remember { mutableStateOf(false) }
@@ -250,7 +257,7 @@ fun ChatsListScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "MostazaChat",
+                            text = "MostazaFake",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
@@ -496,6 +503,7 @@ fun ChatsListScreen(
                                     items(filtered, key = { it.id }) { chat ->
                                         ChatListCard(
                                             chat = chat,
+                                            sensitiveFilterEnabled = safetySettings.sensitiveFilterEnabled,
                                             onClick = { onOpenChat(chat.id) },
                                             onAvatarClick = { previewingAvatarChat = chat },
                                             onEditChat = { editingChatFromPreview = chat },
@@ -514,6 +522,7 @@ fun ChatsListScreen(
 
     if (showCreateSheet) {
         val draft = importedContactDraft
+        var pendingAiConfig by remember { mutableStateOf(ChatAiConfig()) }
         ChatEditorSheet(
             title = if (draft != null) "Clonar contacto" else "Nueva conversación",
             confirmLabel = "Crear chat",
@@ -526,6 +535,7 @@ fun ChatsListScreen(
             myDefaultName = userProfile?.defaultMyName ?: "Yo",
             userDisplayName = userProfile?.displayName ?: "",
             allowContactImport = true,
+            onSaveChatAiConfig = { cfg -> pendingAiConfig = cfg },
             onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
             onDismiss = {
                 showCreateSheet = false
@@ -534,6 +544,7 @@ fun ChatsListScreen(
             onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, _, wallpaper, unread, pinned, members, pendingTxt ->
                 showCreateSheet = false
                 importedContactDraft = null
+                val capturedAiConfig = pendingAiConfig
                 viewModel.createChat(
                     contactName = name,
                     groupChat = isGroup,
@@ -548,19 +559,25 @@ fun ChatsListScreen(
                     pinned = pinned,
                     groupMembersJson = if (isGroup) GroupMembersCodec.encode(members) else null,
                     pendingTxtImport = pendingTxt,
-                    onCreated = onOpenChat
+                    onCreated = { createdChatId ->
+                        LlmSettingsStore.saveChatConfig(context, createdChatId, capturedAiConfig)
+                        onOpenChat(createdChatId)
+                    }
                 )
             }
         )
     }
 
     if (showGroupCreatorSheet) {
+        var pendingGroupAiConfig by remember { mutableStateOf(ChatAiConfig()) }
         GroupCreatorSheet(
             availableChats = allChats,
             onError = { msg -> viewModel.emitStatusMessage(msg) },
+            onSaveChatAiConfig = { cfg -> pendingGroupAiConfig = cfg },
             onDismiss = { showGroupCreatorSheet = false },
             onCreateGroup = { groupName, statusSummary, emoji, colorHex, avatarPhoto, wallpaper, members ->
                 showGroupCreatorSheet = false
+                val capturedGroupAiConfig = pendingGroupAiConfig
                 viewModel.createChat(
                     contactName = groupName,
                     groupChat = true,
@@ -575,7 +592,10 @@ fun ChatsListScreen(
                     pinned = false,
                     groupMembersJson = GroupMembersCodec.encode(members),
                     pendingTxtImport = null,
-                    onCreated = onOpenChat
+                    onCreated = { createdGroupId ->
+                        LlmSettingsStore.saveChatConfig(context, createdGroupId, capturedGroupAiConfig)
+                        onOpenChat(createdGroupId)
+                    }
                 )
             }
         )
@@ -644,6 +664,8 @@ fun ChatsListScreen(
                 isEditingExistingChat = true,
                 myDefaultName = userProfile?.defaultMyName ?: "Yo",
                 userDisplayName = userProfile?.displayName ?: "",
+                initialChatAiConfig = LlmSettingsStore.getChatConfig(editChat.id),
+                onSaveChatAiConfig = { cfg -> LlmSettingsStore.saveChatConfig(context, editChat.id, cfg) },
                 onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
                 onDismiss = { editingChatFromPreview = null },
                 onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
@@ -690,6 +712,7 @@ fun ChatsListScreen(
 @Composable
 private fun ChatListCard(
     chat: FakeChat,
+    sensitiveFilterEnabled: Boolean,
     onClick: () -> Unit,
     onAvatarClick: () -> Unit,
     onEditChat: () -> Unit,
@@ -800,8 +823,9 @@ private fun ChatListCard(
                         if (chat.parsedLastSender == SenderRole.ME) {
                             TickStatusIcon(tickStatus = chat.parsedLastTick, size = 15.dp)
                         }
+                        val rawPreview = chat.lastMessagePreview.ifBlank { chat.statusText }
                         Text(
-                            text = chat.lastMessagePreview.ifBlank { chat.statusText },
+                            text = SensitiveContentFilter.maskIfFiltered(rawPreview, sensitiveFilterEnabled),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -926,15 +950,15 @@ private fun EmptyChatsState(
         }
         Spacer(Modifier.height(18.dp))
         Text(
-            text = "Tu estudio MostazaChat está listo",
+            text = "Tu estudio MostazaFake está listo",
             style = MaterialTheme.typography.headlineSmall
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = if (isGuestMode) {
-                "Clona contactos de tu agenda, importa chats desde WhatsApp/Telegram o créalos desde cero. Todo se guarda localmente en este teléfono."
+                "App para crear conversaciones ficticias y simular chats NO reales. Clona contactos o créalos desde cero en local."
             } else {
-                "Clona contactos de tu agenda, importa chats desde WhatsApp/Telegram o créalos desde cero con sincronización en la nube."
+                "App para crear conversaciones ficticias y simular chats NO reales. Clona contactos o créalos desde cero con respaldo en la nube."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant

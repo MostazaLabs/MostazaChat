@@ -46,17 +46,20 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
@@ -98,6 +101,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -128,7 +132,12 @@ import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
 import com.example.data.model.UiState
 import com.example.data.model.WallpaperTheme
+import com.example.llm.ChatAiConfig
+import com.example.llm.LlmSettingsStore
 import com.example.media.MediaImportHelper
+import com.example.safety.ReportIncidentDialog
+import com.example.safety.SafetyPrefsStore
+import com.example.safety.SensitiveContentFilter
 import com.example.ui.components.AvatarBadge
 import com.example.ui.components.ChatEditorSheet
 import com.example.ui.components.ContactAvatarPreviewDialog
@@ -147,6 +156,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -158,12 +168,19 @@ fun ChatRoomScreen(
     viewModel: ChatRoomViewModel,
     myDefaultName: String,
     availableChats: List<FakeChat> = emptyList(),
+    onDeleteReportedChat: () -> Unit = {},
+    onCaptureVerifiedScreenshot: () -> Unit = {},
     onBack: () -> Unit,
     onStartFakeCall: (FakeChat, CallType) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    SafetyPrefsStore.ensureInitialized(context)
+    LlmSettingsStore.ensureInitialized(context)
+    val safetySettings by SafetyPrefsStore.settings.collectAsStateWithLifecycle()
+    val llmGlobalSettings by LlmSettingsStore.globalSettings.collectAsStateWithLifecycle()
+    val llmChatConfigs by LlmSettingsStore.chatConfigs.collectAsStateWithLifecycle()
 
     val chatState by viewModel.chatState.collectAsStateWithLifecycle()
     val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
@@ -175,6 +192,7 @@ fun ChatRoomScreen(
     val replyTarget by viewModel.replyTarget.collectAsStateWithLifecycle()
     val screenshotMode by viewModel.screenshotMode.collectAsStateWithLifecycle()
     val isSimulatingTyping by viewModel.isSimulatingTyping.collectAsStateWithLifecycle()
+    val isGeneratingAiReply by viewModel.isGeneratingAiReply.collectAsStateWithLifecycle()
     val isImportingMedia by viewModel.isImportingMedia.collectAsStateWithLifecycle()
     val errorBanner by viewModel.errorBanner.collectAsStateWithLifecycle()
 
@@ -190,6 +208,20 @@ fun ChatRoomScreen(
     var showVoiceDialog by remember { mutableStateOf(false) }
     var showTimeDialog by remember { mutableStateOf(false) }
     var showDelayedReplyDialog by remember { mutableStateOf(false) }
+    var showReportChatDialog by remember { mutableStateOf(false) }
+    var reportingMessageTarget by remember { mutableStateOf<FakeMessage?>(null) }
+    var hideScreenshotControlsForCapture by remember { mutableStateOf(false) }
+
+    val triggerCleanVerifiedCapture = {
+        scope.launch {
+            hideScreenshotControlsForCapture = true
+            delay(90L)
+            withFrameNanos { }
+            onCaptureVerifiedScreenshot()
+            delay(150L)
+            hideScreenshotControlsForCapture = false
+        }
+    }
 
     val fallbackMediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -229,21 +261,26 @@ fun ChatRoomScreen(
     }
 
     val chat = (chatState as? UiState.Success)?.data
+    val currentChatAiConfig = remember(chat?.id, llmChatConfigs) {
+        chat?.id?.let { llmChatConfigs[it] } ?: ChatAiConfig()
+    }
+    val isAiActiveInChat = llmGlobalSettings.isConfiguredAndEnabled && currentChatAiConfig.enabled
+    val showTypingBubble = isSimulatingTyping || isGeneratingAiReply
     val messages = (messagesState as? UiState.Success)?.data ?: emptyList()
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
+    LaunchedEffect(messages.size, showTypingBubble) {
         if (messages.isNotEmpty()) {
             listState.scrollToItem(messages.size - 1)
         }
     }
 
-    val showScrollToBottom by remember(messages.size, isSimulatingTyping) {
+    val showScrollToBottom by remember(messages.size, showTypingBubble) {
         derivedStateOf {
             if (messages.isEmpty()) {
                 false
             } else {
-                val totalCount = messages.size + if (isSimulatingTyping) 1 else 0
+                val totalCount = messages.size + if (showTypingBubble) 1 else 0
                 val lastIndex = totalCount - 1
                 val layoutInfo = listState.layoutInfo
                 val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
@@ -333,9 +370,9 @@ fun ChatRoomScreen(
                                     }
                                 }
                                 Text(
-                                    text = if (isSimulatingTyping) "escribiendo..." else chat.statusText,
+                                    text = if (showTypingBubble) "escribiendo..." else chat.statusText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (isSimulatingTyping) MaterialTheme.colorScheme.primary
+                                    color = if (showTypingBubble) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -423,6 +460,35 @@ fun ChatRoomScreen(
                                         onClick = {
                                             showTopMenu = false
                                             viewModel.toggleScreenshotMode()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar captura verificada") },
+                                        leadingIcon = {
+                                            Icon(Icons.Rounded.PhotoCamera, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showTopMenu = false
+                                            triggerCleanVerifiedCapture()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                "Reportar chat o abuso",
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Rounded.Flag,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        },
+                                        onClick = {
+                                            showTopMenu = false
+                                            showReportChatDialog = true
                                         }
                                     )
                                 }
@@ -519,6 +585,7 @@ fun ChatRoomScreen(
                                     isGroup = chat?.groupChat == true,
                                     isDarkWallpaper = isDarkWallpaper,
                                     screenshotMode = screenshotMode,
+                                    sensitiveFilterEnabled = safetySettings.sensitiveFilterEnabled,
                                     onTap = {
                                         if (!screenshotMode) editingMessage = msg
                                     },
@@ -528,7 +595,7 @@ fun ChatRoomScreen(
                                 )
                             }
 
-                            if (isSimulatingTyping) {
+                            if (showTypingBubble) {
                                 item(key = "typing_indicator") {
                                     TypingIndicatorBubble(isDark = isDarkWallpaper)
                                 }
@@ -536,20 +603,35 @@ fun ChatRoomScreen(
                         }
                     }
 
-                    if (screenshotMode) {
-                        SmallFloatingActionButton(
-                            onClick = { viewModel.toggleScreenshotMode() },
-                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                            contentColor = MaterialTheme.colorScheme.onSurface,
+                    if (screenshotMode && !hideScreenshotControlsForCapture) {
+                        Row(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(10.dp)
-                                .testTag("exit_screenshot_mode_button")
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.VisibilityOff,
-                                contentDescription = "Salir de Modo Captura"
-                            )
+                            SmallFloatingActionButton(
+                                onClick = { triggerCleanVerifiedCapture() },
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.testTag("save_verified_screenshot_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PhotoCamera,
+                                    contentDescription = stringResource(R.string.cd_capture_verified_screenshot)
+                                )
+                            }
+                            SmallFloatingActionButton(
+                                onClick = { viewModel.toggleScreenshotMode() },
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                                contentColor = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("exit_screenshot_mode_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.VisibilityOff,
+                                    contentDescription = "Salir de Modo Captura"
+                                )
+                            }
                         }
                     }
 
@@ -557,7 +639,7 @@ fun ChatRoomScreen(
                         SmallFloatingActionButton(
                             onClick = {
                                 scope.launch {
-                                    val targetIndex = (messages.size - 1 + if (isSimulatingTyping) 1 else 0)
+                                    val targetIndex = (messages.size - 1 + if (showTypingBubble) 1 else 0)
                                         .coerceAtLeast(0)
                                     listState.scrollToItem(targetIndex, scrollOffset = 100_000)
                                 }
@@ -706,6 +788,37 @@ fun ChatRoomScreen(
                                     },
                                     label = { Text("Auto 3s") }
                                 )
+                                if (isAiActiveInChat) {
+                                    AssistChip(
+                                        onClick = {
+                                            if (!isGeneratingAiReply) {
+                                                viewModel.generateAiReply(
+                                                    globalSettings = llmGlobalSettings,
+                                                    chatAiConfig = currentChatAiConfig,
+                                                    myDefaultName = myDefaultName,
+                                                    sensitiveFilterEnabled = safetySettings.sensitiveFilterEnabled
+                                                )
+                                            }
+                                        },
+                                        enabled = !isGeneratingAiReply,
+                                        leadingIcon = {
+                                            if (isGeneratingAiReply) {
+                                                CircularProgressIndicator(
+                                                    strokeWidth = 2.dp,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    Icons.Rounded.AutoAwesome,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        },
+                                        label = { Text(if (isGeneratingAiReply) "Generando..." else "Generar IA") },
+                                        modifier = Modifier.testTag("generate_ai_reply_chip")
+                                    )
+                                }
                             }
 
                             if (chat?.groupChat == true && composerRole == SenderRole.OTHER) {
@@ -794,14 +907,31 @@ fun ChatRoomScreen(
                                     .size(48.dp)
                                     .clip(CircleShape)
                                     .clickable(enabled = inputText.isNotBlank()) {
-                                        viewModel.sendMessage(
-                                            text = inputText,
-                                            messageType = MessageType.TEXT,
-                                            myDefaultName = myDefaultName,
-                                            contactName = chat?.contactName ?: "Contacto",
-                                            isGroup = chat?.groupChat == true
-                                        )
-                                        inputText = ""
+                                        if (safetySettings.sensitiveFilterEnabled &&
+                                            SensitiveContentFilter.containsSensitiveContent(inputText)
+                                        ) {
+                                            viewModel.emitError("El filtro de edad (+18) está activo y bloqueó contenido sensible. Puedes ajustarlo en el menú derecho.")
+                                        } else {
+                                            val outgoingText = inputText
+                                            val sentAsMe = composerRole == SenderRole.ME
+                                            viewModel.sendMessage(
+                                                text = outgoingText,
+                                                messageType = MessageType.TEXT,
+                                                myDefaultName = myDefaultName,
+                                                contactName = chat?.contactName ?: "Contacto",
+                                                isGroup = chat?.groupChat == true
+                                            )
+                                            inputText = ""
+                                            if (sentAsMe && isAiActiveInChat && currentChatAiConfig.autoReplyOnSend) {
+                                                viewModel.generateAiReply(
+                                                    globalSettings = llmGlobalSettings,
+                                                    chatAiConfig = currentChatAiConfig,
+                                                    myDefaultName = myDefaultName,
+                                                    sensitiveFilterEnabled = safetySettings.sensitiveFilterEnabled,
+                                                    extraPendingUserMessage = outgoingText
+                                                )
+                                            }
+                                        }
                                     }
                                     .testTag("send_message_button")
                             ) {
@@ -839,6 +969,8 @@ fun ChatRoomScreen(
                 availableChats = availableChats,
                 isEditingExistingChat = true,
                 myDefaultName = myDefaultName,
+                initialChatAiConfig = currentChatAiConfig,
+                onSaveChatAiConfig = { cfg -> LlmSettingsStore.saveChatConfig(context, chat.id, cfg) },
                 onContactImportError = { msg -> viewModel.emitError(msg) },
                 onDismiss = { showChatSettings = false },
                 onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
@@ -888,7 +1020,7 @@ fun ChatRoomScreen(
 
     if (showGalleryConsent) {
         GalleryAccessConsentDialog(
-            purposeText = "MostazaChat abrirá el selector seguro de Android para que elijas únicamente las fotos o vídeos que quieras añadir al chat.",
+            purposeText = "MostazaFake abrirá el selector seguro de Android para que elijas únicamente las fotos o vídeos que quieras añadir al chat.",
             onConfirm = {
                 MediaImportHelper.setGalleryAccessConsentGranted(context)
                 showGalleryConsent = false
@@ -958,24 +1090,34 @@ fun ChatRoomScreen(
                 viewModel.setReplyTarget(msg)
             },
             onSave = { newText, newTime, newDate, newRole, newSender, newTick, newReaction, mediaUri, clearMedia ->
-                editingMessage = null
-                viewModel.updateMessage(
-                    message = msg,
-                    newText = newText,
-                    newTime = newTime,
-                    newDateLabel = newDate,
-                    newRole = newRole,
-                    newSenderName = newSender,
-                    newTick = newTick,
-                    newReaction = newReaction,
-                    context = context,
-                    replacementMediaUri = mediaUri,
-                    clearMedia = clearMedia
-                )
+                if (safetySettings.sensitiveFilterEnabled &&
+                    SensitiveContentFilter.containsSensitiveContent(newText)
+                ) {
+                    viewModel.emitError("El filtro de edad (+18) está activo y bloqueó contenido sensible.")
+                } else {
+                    editingMessage = null
+                    viewModel.updateMessage(
+                        message = msg,
+                        newText = newText,
+                        newTime = newTime,
+                        newDateLabel = newDate,
+                        newRole = newRole,
+                        newSenderName = newSender,
+                        newTick = newTick,
+                        newReaction = newReaction,
+                        context = context,
+                        replacementMediaUri = mediaUri,
+                        clearMedia = clearMedia
+                    )
+                }
             },
             onDelete = {
                 editingMessage = null
                 viewModel.deleteMessage(msg.id)
+            },
+            onReport = {
+                editingMessage = null
+                reportingMessageTarget = msg
             }
         )
     }
@@ -1024,6 +1166,57 @@ fun ChatRoomScreen(
             }
         )
     }
+    if (showReportChatDialog) {
+        ReportIncidentDialog(
+            chatId = chat?.id,
+            chatTitle = chat?.contactName,
+            developerEmail = safetySettings.developerEmail,
+            canHideContentLocally = chat != null,
+            onDismiss = { showReportChatDialog = false },
+            onSubmitReport = { category, details, hideLocally ->
+                val report = SafetyPrefsStore.addReport(
+                    context = context,
+                    category = category,
+                    details = details,
+                    chatId = chat?.id,
+                    chatTitle = chat?.contactName,
+                    hidContentLocally = hideLocally
+                )
+                if (hideLocally) {
+                    onDeleteReportedChat()
+                }
+                report
+            }
+        )
+    }
+
+    reportingMessageTarget?.let { targetMsg ->
+        ReportIncidentDialog(
+            chatId = chat?.id,
+            chatTitle = chat?.contactName,
+            messageId = targetMsg.id,
+            messageExcerpt = targetMsg.text,
+            developerEmail = safetySettings.developerEmail,
+            canHideContentLocally = true,
+            onDismiss = { reportingMessageTarget = null },
+            onSubmitReport = { category, details, hideLocally ->
+                val report = SafetyPrefsStore.addReport(
+                    context = context,
+                    category = category,
+                    details = details,
+                    chatId = chat?.id,
+                    chatTitle = chat?.contactName,
+                    messageId = targetMsg.id,
+                    messageExcerpt = targetMsg.text,
+                    hidContentLocally = hideLocally
+                )
+                if (hideLocally) {
+                    viewModel.deleteMessage(targetMsg.id)
+                }
+                report
+            }
+        )
+    }
 }
 
 @Composable
@@ -1056,9 +1249,11 @@ private fun MessageBubbleItem(
     isGroup: Boolean,
     isDarkWallpaper: Boolean,
     screenshotMode: Boolean,
+    sensitiveFilterEnabled: Boolean,
     onTap: () -> Unit,
     onOpenMedia: () -> Unit
 ) {
+    val visibleText = SensitiveContentFilter.maskIfFiltered(message.text, sensitiveFilterEnabled)
     val role = message.parsedSenderRole
     if (role == SenderRole.SYSTEM || message.parsedMessageType == MessageType.SYSTEM) {
         Box(
@@ -1073,7 +1268,7 @@ private fun MessageBubbleItem(
                 modifier = Modifier.clickable(enabled = !screenshotMode, onClick = onTap)
             ) {
                 Text(
-                    text = message.text,
+                    text = visibleText,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
@@ -1174,7 +1369,7 @@ private fun MessageBubbleItem(
                         }
                         else -> {
                             Text(
-                                text = message.text,
+                                text = visibleText,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = textColor
                             )
@@ -1426,7 +1621,8 @@ private fun MessageStudioSheet(
         replacementMediaUri: Uri?,
         clearMedia: Boolean
     ) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onReport: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val isOmittedPlaceholder = remember(message.id, message.text) {
@@ -1912,12 +2108,27 @@ private fun MessageStudioSheet(
                     Text("Guardar")
                 }
             }
+            OutlinedButton(
+                onClick = onReport,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Flag,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("Reportar este mensaje", color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 
     if (showMediaConsent) {
         GalleryAccessConsentDialog(
-            purposeText = "MostazaChat abrirá el selector seguro de Android para que elijas únicamente la foto, GIF o vídeo con el que reemplazar este mensaje.",
+            purposeText = "MostazaFake abrirá el selector seguro de Android para que elijas únicamente la foto, GIF o vídeo con el que reemplazar este mensaje.",
             onConfirm = {
                 MediaImportHelper.setGalleryAccessConsentGranted(context)
                 showMediaConsent = false

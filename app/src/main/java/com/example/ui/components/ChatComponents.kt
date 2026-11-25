@@ -95,6 +95,8 @@ import com.example.data.model.GroupMember
 import com.example.data.model.GroupMembersCodec
 import com.example.data.model.TickStatus
 import com.example.data.model.WallpaperTheme
+import com.example.llm.ChatAiConfig
+import com.example.llm.OptionalChatAiSection
 import com.example.media.MediaImportHelper
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.PendingTxtImport
@@ -485,6 +487,8 @@ fun ChatEditorSheet(
     myDefaultName: String = "Yo",
     userDisplayName: String = "",
     allowContactImport: Boolean = false,
+    initialChatAiConfig: ChatAiConfig = ChatAiConfig(),
+    onSaveChatAiConfig: ((ChatAiConfig) -> Unit)? = null,
     onContactImportError: (String) -> Unit = {},
     onDismiss: () -> Unit,
     onSave: (
@@ -519,6 +523,7 @@ fun ChatEditorSheet(
     var wallpaper by remember { mutableStateOf(initialWallpaper) }
     var unreadText by remember { mutableStateOf(initialUnreadCount.toString()) }
     var pinned by remember { mutableStateOf(initialPinned) }
+    var chatAiConfig by remember(initialChatAiConfig) { mutableStateOf(initialChatAiConfig) }
     var groupMembers by remember(initialGroupMembers, initialGroupChat, initialStatusText) {
         mutableStateOf(
             when {
@@ -1130,6 +1135,12 @@ fun ChatEditorSheet(
                 onCheckedChange = { pinned = it }
             )
 
+            OptionalChatAiSection(
+                config = chatAiConfig,
+                isGroup = groupChat,
+                onConfigChanged = { chatAiConfig = it }
+            )
+
             Spacer(Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1146,6 +1157,7 @@ fun ChatEditorSheet(
                 Button(
                     onClick = {
                         val unread = unreadText.toLongOrNull()?.coerceIn(0L, 9999L) ?: 0L
+                        onSaveChatAiConfig?.invoke(chatAiConfig)
                         onSave(
                             contactName.trim(),
                             groupChat,
@@ -1177,7 +1189,7 @@ fun ChatEditorSheet(
 
     if (showGalleryConsent) {
         GalleryAccessConsentDialog(
-            purposeText = "MostazaChat te pedirá elegir una única foto de perfil mediante el selector seguro de Android. No accederemos al resto de tu galería.",
+            purposeText = "MostazaFake te pedirá elegir una única foto de perfil mediante el selector seguro de Android. No accederemos al resto de tu galería.",
             onConfirm = {
                 MediaImportHelper.setGalleryAccessConsentGranted(context)
                 showGalleryConsent = false
