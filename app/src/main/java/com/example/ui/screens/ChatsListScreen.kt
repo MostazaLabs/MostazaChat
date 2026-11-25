@@ -66,9 +66,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -130,6 +132,7 @@ fun ChatsListScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val activeFilter by viewModel.activeFilter.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
     var showSearchBar by remember { mutableStateOf(false) }
@@ -443,54 +446,63 @@ fun ChatsListScreen(
                             }
                         }
 
-                        if (state.data.isEmpty()) {
-                            EmptyChatsState(
-                                isBusy = isBusy || isParsingWhatsAppTxt,
-                                isGuestMode = isGuestMode,
-                                onCreateNew = {
-                                    importedContactDraft = null
-                                    showCreateSheet = true
-                                },
-                                onImportContact = launchContactPicker,
-                                onCloneFromMessagingApp = { showMessagingCloneSheet = true },
-                                onCreateSample = {
-                                    viewModel.createSampleChat(onCreated = onOpenChat)
-                                }
-                            )
-                        } else if (filtered.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No hay conversaciones que coincidan con tu filtro.",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = { viewModel.refreshChats() },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("chats_pull_to_refresh")
+                        ) {
+                            if (state.data.isEmpty()) {
+                                EmptyChatsState(
+                                    isBusy = isBusy || isParsingWhatsAppTxt,
+                                    isGuestMode = isGuestMode,
+                                    onCreateNew = {
+                                        importedContactDraft = null
+                                        showCreateSheet = true
+                                    },
+                                    onImportContact = launchContactPicker,
+                                    onCloneFromMessagingApp = { showMessagingCloneSheet = true },
+                                    onCreateSample = {
+                                        viewModel.createSampleChat(onCreated = onOpenChat)
+                                    }
                                 )
-                            }
-                        } else {
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(
-                                    start = 16.dp,
-                                    end = 16.dp,
-                                    top = 8.dp,
-                                    bottom = 96.dp
-                                ),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                items(filtered, key = { it.id }) { chat ->
-                                    ChatListCard(
-                                        chat = chat,
-                                        onClick = { onOpenChat(chat.id) },
-                                        onAvatarClick = { previewingAvatarChat = chat },
-                                        onEditChat = { editingChatFromPreview = chat },
-                                        onTogglePin = { viewModel.togglePinned(chat) },
-                                        onDelete = { viewModel.deleteChat(chat.id) }
+                            } else if (filtered.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "No hay conversaciones que coincidan con tu filtro.",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                }
+                            } else {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(
+                                        start = 16.dp,
+                                        end = 16.dp,
+                                        top = 8.dp,
+                                        bottom = 96.dp
+                                    ),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    items(filtered, key = { it.id }) { chat ->
+                                        ChatListCard(
+                                            chat = chat,
+                                            onClick = { onOpenChat(chat.id) },
+                                            onAvatarClick = { previewingAvatarChat = chat },
+                                            onEditChat = { editingChatFromPreview = chat },
+                                            onTogglePin = { viewModel.togglePinned(chat) },
+                                            onDelete = { viewModel.deleteChat(chat.id) }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -612,51 +624,53 @@ fun ChatsListScreen(
 
     editingChatFromPreview?.let { editChat ->
         val myLabel = userProfile?.defaultMyName ?: "Tú"
-        ChatEditorSheet(
-            title = if (editChat.groupChat) "Configuración del grupo" else "Configurar contacto",
-            confirmLabel = "Guardar cambios",
-            initialContactName = editChat.contactName,
-            initialGroupChat = editChat.groupChat,
-            initialStatusText = editChat.statusText,
-            initialOnline = editChat.online,
-            initialVerified = editChat.verified,
-            initialAvatarEmoji = editChat.avatarEmoji,
-            initialAvatarColorHex = editChat.avatarColorHex,
-            initialAvatarImageBase64 = editChat.avatarImageBase64,
-            initialWallpaper = editChat.parsedWallpaper,
-            initialUnreadCount = editChat.unreadCount,
-            initialPinned = editChat.pinned,
-            initialGroupMembers = editChat.resolvedGroupMembers(myLabel),
-            availableChats = allChats,
-            isEditingExistingChat = true,
-            myDefaultName = userProfile?.defaultMyName ?: "Yo",
-            userDisplayName = userProfile?.displayName ?: "",
-            onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
-            onDismiss = { editingChatFromPreview = null },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
-                editingChatFromPreview = null
-                val encodedMembers = if (isGroup) GroupMembersCodec.encode(members) else null
-                viewModel.updateChatSettings(
-                    chatId = editChat.id,
-                    contactName = name,
-                    groupChat = isGroup,
-                    statusText = status,
-                    online = online,
-                    verified = verified,
-                    avatarEmoji = emoji,
-                    avatarColorHex = color,
-                    avatarImageBase64 = avatarPhoto,
-                    clearAvatarPhoto = clearPhoto,
-                    wallpaperTheme = wallpaper,
-                    unreadCount = unread,
-                    pinned = pinned,
-                    groupMembersJson = encodedMembers,
-                    clearGroupMembers = !isGroup || encodedMembers == null,
-                    pendingTxtImport = pendingTxt,
-                    onTxtImported = onOpenChat
-                )
-            }
-        )
+        key(editChat.id) {
+            ChatEditorSheet(
+                title = if (editChat.groupChat) "Configuración del grupo" else "Configurar contacto",
+                confirmLabel = "Guardar cambios",
+                initialContactName = editChat.contactName,
+                initialGroupChat = editChat.groupChat,
+                initialStatusText = editChat.statusText,
+                initialOnline = editChat.online,
+                initialVerified = editChat.verified,
+                initialAvatarEmoji = editChat.avatarEmoji,
+                initialAvatarColorHex = editChat.avatarColorHex,
+                initialAvatarImageBase64 = editChat.avatarImageBase64,
+                initialWallpaper = editChat.parsedWallpaper,
+                initialUnreadCount = editChat.unreadCount,
+                initialPinned = editChat.pinned,
+                initialGroupMembers = editChat.resolvedGroupMembers(myLabel),
+                availableChats = allChats,
+                isEditingExistingChat = true,
+                myDefaultName = userProfile?.defaultMyName ?: "Yo",
+                userDisplayName = userProfile?.displayName ?: "",
+                onContactImportError = { msg -> viewModel.emitStatusMessage(msg) },
+                onDismiss = { editingChatFromPreview = null },
+                onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
+                    editingChatFromPreview = null
+                    val encodedMembers = if (isGroup) GroupMembersCodec.encode(members) else null
+                    viewModel.updateChatSettings(
+                        chatId = editChat.id,
+                        contactName = name,
+                        groupChat = isGroup,
+                        statusText = status,
+                        online = online,
+                        verified = verified,
+                        avatarEmoji = emoji,
+                        avatarColorHex = color,
+                        avatarImageBase64 = avatarPhoto,
+                        clearAvatarPhoto = clearPhoto,
+                        wallpaperTheme = wallpaper,
+                        unreadCount = unread,
+                        pinned = pinned,
+                        groupMembersJson = encodedMembers,
+                        clearGroupMembers = !isGroup || encodedMembers == null,
+                        pendingTxtImport = pendingTxt,
+                        onTxtImported = onOpenChat
+                    )
+                }
+            )
+        }
     }
 
     if (showMessagingCloneSheet) {

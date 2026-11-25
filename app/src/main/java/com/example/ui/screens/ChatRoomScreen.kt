@@ -92,6 +92,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -819,48 +820,50 @@ fun ChatRoomScreen(
     }
 
     if (showChatSettings && chat != null) {
-        ChatEditorSheet(
-            title = if (chat.groupChat) "Info. y miembros del grupo" else "Configurar chat",
-            confirmLabel = "Guardar cambios",
-            initialContactName = chat.contactName,
-            initialGroupChat = chat.groupChat,
-            initialStatusText = chat.statusText,
-            initialOnline = chat.online,
-            initialVerified = chat.verified,
-            initialAvatarEmoji = chat.avatarEmoji,
-            initialAvatarColorHex = chat.avatarColorHex,
-            initialAvatarImageBase64 = chat.avatarImageBase64,
-            initialWallpaper = chat.parsedWallpaper,
-            initialUnreadCount = chat.unreadCount,
-            initialPinned = chat.pinned,
-            initialGroupMembers = chat.resolvedGroupMembers(myDefaultName),
-            availableChats = availableChats,
-            isEditingExistingChat = true,
-            myDefaultName = myDefaultName,
-            onContactImportError = { msg -> viewModel.emitError(msg) },
-            onDismiss = { showChatSettings = false },
-            onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
-                showChatSettings = false
-                val encodedMembers = if (isGroup) GroupMembersCodec.encode(members) else null
-                viewModel.updateChatSettings(
-                    contactName = name,
-                    groupChat = isGroup,
-                    statusText = status,
-                    online = online,
-                    verified = verified,
-                    avatarEmoji = emoji,
-                    avatarColorHex = color,
-                    avatarImageBase64 = avatarPhoto,
-                    clearAvatarPhoto = clearPhoto,
-                    wallpaperTheme = wallpaper,
-                    unreadCount = unread,
-                    pinned = pinned,
-                    groupMembersJson = encodedMembers,
-                    clearGroupMembers = !isGroup || encodedMembers == null,
-                    pendingTxtImport = pendingTxt
-                )
-            }
-        )
+        key(chat.id) {
+            ChatEditorSheet(
+                title = if (chat.groupChat) "Info. y miembros del grupo" else "Configurar chat",
+                confirmLabel = "Guardar cambios",
+                initialContactName = chat.contactName,
+                initialGroupChat = chat.groupChat,
+                initialStatusText = chat.statusText,
+                initialOnline = chat.online,
+                initialVerified = chat.verified,
+                initialAvatarEmoji = chat.avatarEmoji,
+                initialAvatarColorHex = chat.avatarColorHex,
+                initialAvatarImageBase64 = chat.avatarImageBase64,
+                initialWallpaper = chat.parsedWallpaper,
+                initialUnreadCount = chat.unreadCount,
+                initialPinned = chat.pinned,
+                initialGroupMembers = chat.resolvedGroupMembers(myDefaultName),
+                availableChats = availableChats,
+                isEditingExistingChat = true,
+                myDefaultName = myDefaultName,
+                onContactImportError = { msg -> viewModel.emitError(msg) },
+                onDismiss = { showChatSettings = false },
+                onSave = { name, isGroup, status, online, verified, emoji, color, avatarPhoto, clearPhoto, wallpaper, unread, pinned, members, pendingTxt ->
+                    showChatSettings = false
+                    val encodedMembers = if (isGroup) GroupMembersCodec.encode(members) else null
+                    viewModel.updateChatSettings(
+                        contactName = name,
+                        groupChat = isGroup,
+                        statusText = status,
+                        online = online,
+                        verified = verified,
+                        avatarEmoji = emoji,
+                        avatarColorHex = color,
+                        avatarImageBase64 = avatarPhoto,
+                        clearAvatarPhoto = clearPhoto,
+                        wallpaperTheme = wallpaper,
+                        unreadCount = unread,
+                        pinned = pinned,
+                        groupMembersJson = encodedMembers,
+                        clearGroupMembers = !isGroup || encodedMembers == null,
+                        pendingTxtImport = pendingTxt
+                    )
+                }
+            )
+        }
     }
 
     if (showContactAvatarPreview && chat != null) {

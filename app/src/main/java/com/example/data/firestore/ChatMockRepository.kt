@@ -15,6 +15,7 @@ import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperTheme
+import com.example.media.MediaImportHelper
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.ParsedWhatsAppMessage
 import com.google.firebase.Firebase
@@ -204,7 +205,7 @@ class ChatMockRepository(
             val safeStatus = statusText.trim().take(80)
             val safeEmoji = avatarEmoji.trim().ifBlank { "💬" }.take(16)
             val safeColor = avatarColorHex.trim().ifBlank { "#00796B" }.take(12)
-            val safePhoto = avatarImageBase64?.trim()?.takeIf { it.isNotEmpty() && it.length <= 48000 }
+            val safePhoto = MediaImportHelper.normalizeAvatarBase64(avatarImageBase64, maxChars = 48_000)
             val safeMembers = if (groupChat) {
                 groupMembersJson?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32000 }
             } else {
@@ -386,7 +387,7 @@ class ChatMockRepository(
             if (clearAvatarPhoto) {
                 updates["avatarImageBase64"] = FieldValue.delete()
             } else {
-                avatarImageBase64?.trim()?.takeIf { it.isNotEmpty() && it.length <= 48000 }?.let {
+                MediaImportHelper.normalizeAvatarBase64(avatarImageBase64, maxChars = 48_000)?.let {
                     updates["avatarImageBase64"] = it
                 }
             }

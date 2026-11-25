@@ -14,6 +14,7 @@ import com.example.data.model.SenderRole
 import com.example.data.model.TickStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.WallpaperTheme
+import com.example.media.MediaImportHelper
 import com.example.media.ParsedWhatsAppChat
 import com.example.media.ParsedWhatsAppMessage
 import com.google.firebase.Timestamp
@@ -149,7 +150,7 @@ class LocalChatMockRepository(
                 verified = verified,
                 avatarEmoji = avatarEmoji.trim().ifBlank { "💬" }.take(16),
                 avatarColorHex = avatarColorHex.trim().ifBlank { "#00796B" }.take(12),
-                avatarImageBase64 = avatarImageBase64?.trim()?.takeIf { it.isNotEmpty() && it.length <= 48000 },
+                avatarImageBase64 = MediaImportHelper.normalizeAvatarBase64(avatarImageBase64, maxChars = 48_000),
                 wallpaperTheme = wallpaperTheme.name,
                 unreadCount = unreadCount.coerceIn(0L, 9999L),
                 pinned = pinned,
@@ -322,7 +323,7 @@ class LocalChatMockRepository(
             val updatedPhoto = if (clearAvatarPhoto) {
                 null
             } else {
-                avatarImageBase64?.trim()?.takeIf { it.isNotEmpty() && it.length <= 48000 }
+                MediaImportHelper.normalizeAvatarBase64(avatarImageBase64, maxChars = 48_000)
                     ?: current.avatarImageBase64
             }
             val effectiveGroup = groupChat ?: current.groupChat

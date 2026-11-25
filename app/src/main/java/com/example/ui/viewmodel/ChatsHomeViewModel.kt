@@ -17,13 +17,17 @@ import com.example.media.RemoteBackupClient
 import com.example.media.WhatsAppTxtParser
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -41,9 +45,17 @@ class ChatsHomeViewModel(
     initialEmail: String?
 ) : ViewModel() {
 
-    val chatsState: StateFlow<UiState<List<FakeChat>>> = repository.observeChats(currentUserId)
+    private val refreshTrigger = MutableStateFlow(0)
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing = _isRefreshing.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val chatsState: StateFlow<UiState<List<FakeChat>>> = refreshTrigger
+        .flatMapLatest { repository.observeChats(currentUserId) }
+        .onEach { _isRefreshing.value = false }
         .map<List<FakeChat>, UiState<List<FakeChat>>> { UiState.Success(it) }
         .catch { error ->
+            _isRefreshing.value = false
             val firestoreError = generateSequence(error) { it.cause }
                 .filterIsInstance<FirebaseFirestoreException>()
                 .firstOrNull()
@@ -105,6 +117,15 @@ class ChatsHomeViewModel(
 
     fun emitStatusMessage(message: String) {
         _statusMessage.value = message
+    }
+
+    fun refreshChats() {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            refreshTrigger.value += 1
+            delay(550L)
+            _isRefreshing.value = false
+        }
     }
 
     fun createChat(

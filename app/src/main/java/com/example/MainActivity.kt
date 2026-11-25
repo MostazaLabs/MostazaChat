@@ -5,9 +5,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.example.media.MediaImportHelper
 import com.example.ui.navigation.ChatMockApp
 import com.example.ui.theme.ChatMockTheme
 
@@ -23,6 +25,11 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             ChatMockTheme {
+                LaunchedEffect(Unit) {
+                    if (BuildConfig.DEBUG) {
+                        MediaImportHelper.syncDebugTestGalleryImagesIfNeeded(applicationContext)
+                    }
+                }
                 ChatMockApp(
                     sharedIntent = incomingSharedIntent,
                     onConsumeSharedIntent = { incomingSharedIntent = null }

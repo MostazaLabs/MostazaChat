@@ -15,12 +15,14 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import com.example.BuildConfig
 import com.example.data.model.MessageType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.Locale
 import java.util.UUID
 
@@ -34,6 +36,7 @@ data class ImportedChatMedia(
 
 object MediaImportHelper {
 
+    const val AVATAR_MAX_BASE64_CHARS = 46_000
     private const val MEDIA_PREFS_NAME = "mostazachat_media_prefs"
     private const val KEY_GALLERY_CONSENT_GRANTED = "gallery_picker_consent_granted"
 
@@ -52,6 +55,18 @@ object MediaImportHelper {
         return try {
             val bytes = Base64.decode(base64, Base64.DEFAULT)
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun normalizeAvatarBase64(base64: String?, maxChars: Int = AVATAR_MAX_BASE64_CHARS): String? {
+        val clean = base64?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (clean.length <= maxChars) return clean
+        return try {
+            val bytes = Base64.decode(clean, Base64.DEFAULT)
+            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            encodeSquareThumbnail(decoded, sizePx = 280, maxChars = maxChars)
         } catch (_: Exception) {
             null
         }
@@ -106,7 +121,7 @@ object MediaImportHelper {
             ?: contactId?.let { queryDataPhotoBlob(resolver, it) }
             ?: return null
 
-        return encodeSquareThumbnail(bitmap, sizePx = 360, maxChars = 95_000)
+        return encodeSquareThumbnail(bitmap, sizePx = 300, maxChars = AVATAR_MAX_BASE64_CHARS)
     }
 
     private fun queryContactPhotoBlob(
@@ -160,7 +175,7 @@ object MediaImportHelper {
 
     suspend fun importAvatarFromGallery(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
         val bitmap = decodeUriBitmap(context, uri, targetMaxDim = 640) ?: return@withContext null
-        encodeSquareThumbnail(bitmap, sizePx = 360, maxChars = 95_000)
+        encodeSquareThumbnail(bitmap, sizePx = 300, maxChars = AVATAR_MAX_BASE64_CHARS)
     }
 
     fun createMediaChooserIntent(
@@ -359,8 +374,13 @@ object MediaImportHelper {
         val x = (source.width - side) / 2
         val y = (source.height - side) / 2
         val cropped = Bitmap.createBitmap(source, x, y, side, side)
-        val scaled = Bitmap.createScaledBitmap(cropped, sizePx, sizePx, true)
-        return compressToBase64(scaled, maxChars)
+        val candidateSizes = listOf(sizePx, 220, 160, 120).distinct().filter { it <= sizePx }
+        for (dim in candidateSizes) {
+            val scaled = Bitmap.createScaledBitmap(cropped, dim, dim, true)
+            val encoded = compressToBase64(scaled, maxChars)
+            if (encoded != null) return encoded
+        }
+        return null
     }
 
     private fun encodeScaledPreview(source: Bitmap, maxDim: Int, maxChars: Int): String? {
@@ -397,9 +417,57 @@ object MediaImportHelper {
         }
     }
 
+    suspend fun syncDebugTestGalleryImagesIfNeeded(context: Context): Int = withContext(Dispatchers.IO) {
+        if (!BuildConfig.DEBUG) return@withContext 0
+        val appContext = context.applicationContext
+        val prefs = appContext.getSharedPreferences(MEDIA_PREFS_NAME, Context.MODE_PRIVATE)
+        val assetFiles = runCatching {
+            appContext.assets.list("test_gallery")?.sorted().orEmpty()
+        }.getOrDefault(emptyList())
+        if (assetFiles.isEmpty()) return@withContext 0
+
+        var savedCount = 0
+        assetFiles.forEach { fileName ->
+            val prefKey = "synced_debug_gallery_v1_$fileName"
+            if (!prefs.getBoolean(prefKey, false)) {
+                val mimeType = when {
+                    fileName.endsWith(".jpg", ignoreCase = true) || fileName.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+                    fileName.endsWith(".webp", ignoreCase = true) -> "image/webp"
+                    else -> "image/png"
+                }
+                val result = runCatching {
+                    appContext.assets.open("test_gallery/$fileName").use { input ->
+                        saveRawImageStreamToGallery(
+                            context = appContext,
+                            inputStream = input,
+                            displayName = "MostazaTest_$fileName",
+                            mimeType = mimeType
+                        ).getOrThrow()
+                    }
+                }
+                if (result.isSuccess) {
+                    prefs.edit().putBoolean(prefKey, true).apply()
+                    savedCount++
+                }
+            }
+        }
+        savedCount
+    }
+
     private fun saveRawImageFileToGallery(
         context: Context,
         sourceFile: File,
+        displayName: String,
+        mimeType: String
+    ): Result<Uri> {
+        return sourceFile.inputStream().use { input ->
+            saveRawImageStreamToGallery(context, input, displayName, mimeType)
+        }
+    }
+
+    private fun saveRawImageStreamToGallery(
+        context: Context,
+        inputStream: InputStream,
         displayName: String,
         mimeType: String
     ): Result<Uri> {
@@ -416,7 +484,7 @@ object MediaImportHelper {
             ?: return Result.failure(IllegalStateException("MediaStore rechazó el archivo"))
         return try {
             resolver.openOutputStream(uri)?.use { out ->
-                sourceFile.inputStream().use { input -> input.copyTo(out) }
+                inputStream.copyTo(out)
             } ?: throw IllegalStateException("No se pudo abrir el flujo de salida")
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

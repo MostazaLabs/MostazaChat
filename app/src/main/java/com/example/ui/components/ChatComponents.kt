@@ -507,18 +507,18 @@ fun ChatEditorSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var contactName by remember(initialContactName) { mutableStateOf(initialContactName) }
-    var groupChat by remember(initialGroupChat) { mutableStateOf(initialGroupChat) }
-    var statusText by remember(initialStatusText) { mutableStateOf(initialStatusText) }
-    var online by remember(initialOnline) { mutableStateOf(initialOnline) }
-    var verified by remember(initialVerified) { mutableStateOf(initialVerified) }
-    var avatarEmoji by remember(initialAvatarEmoji) { mutableStateOf(initialAvatarEmoji) }
-    var avatarColorHex by remember(initialAvatarColorHex) { mutableStateOf(initialAvatarColorHex) }
-    var avatarImageBase64 by remember(initialAvatarImageBase64) { mutableStateOf(initialAvatarImageBase64) }
-    var clearAvatarPhoto by remember(initialAvatarImageBase64) { mutableStateOf(false) }
-    var wallpaper by remember(initialWallpaper) { mutableStateOf(initialWallpaper) }
-    var unreadText by remember(initialUnreadCount) { mutableStateOf(initialUnreadCount.toString()) }
-    var pinned by remember(initialPinned) { mutableStateOf(initialPinned) }
+    var contactName by remember { mutableStateOf(initialContactName) }
+    var groupChat by remember { mutableStateOf(initialGroupChat) }
+    var statusText by remember { mutableStateOf(initialStatusText) }
+    var online by remember { mutableStateOf(initialOnline) }
+    var verified by remember { mutableStateOf(initialVerified) }
+    var avatarEmoji by remember { mutableStateOf(initialAvatarEmoji) }
+    var avatarColorHex by remember { mutableStateOf(initialAvatarColorHex) }
+    var avatarImageBase64 by remember { mutableStateOf(initialAvatarImageBase64) }
+    var clearAvatarPhoto by remember { mutableStateOf(false) }
+    var wallpaper by remember { mutableStateOf(initialWallpaper) }
+    var unreadText by remember { mutableStateOf(initialUnreadCount.toString()) }
+    var pinned by remember { mutableStateOf(initialPinned) }
     var groupMembers by remember(initialGroupMembers, initialGroupChat, initialStatusText) {
         mutableStateOf(
             when {
